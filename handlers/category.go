@@ -1,34 +1,41 @@
 package handlers
 
 import (
-	"hawker-backend/database"
 	"hawker-backend/models"
+	"hawker-backend/repositories"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
-// CreateCategory 创建分类
-func CreateCategory(c *gin.Context) {
+type CategoryHandler struct {
+	Repo repositories.CategoryRepository
+}
+
+func NewCategoryHandler(repo repositories.CategoryRepository) *CategoryHandler {
+	return &CategoryHandler{Repo: repo}
+}
+
+func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 	var category models.Category
 	if err := c.ShouldBindJSON(&category); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	database.DB.Create(&category)
-	c.JSON(http.StatusOK, category)
+
+	if err := h.Repo.Create(&category); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建分类失败"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, category)
 }
 
-// GetCategories 获取所有分类（包含商品）
-func GetCategories(c *gin.Context) {
-	var categories []models.Category
-	database.DB.Preload("Products").Find(&categories)
+func (h *CategoryHandler) GetAll(c *gin.Context) {
+	categories, err := h.Repo.FindAll()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
 	c.JSON(http.StatusOK, categories)
-}
-
-// DeleteCategory 删除分类
-func DeleteCategory(c *gin.Context) {
-	id := c.Param("id")
-	database.DB.Delete(&models.Category{}, "id = ?", id)
-	c.JSON(http.StatusOK, gin.H{"message": "分类已删除"})
 }

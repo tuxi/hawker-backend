@@ -2,14 +2,15 @@ package database
 
 import (
 	"fmt"
+	"hawker-backend/config"
 	"hawker-backend/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-func InitDB(host string, port int, user string, password string, database string) (*gorm.DB, error) {
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%v sslmode=disable", host, user, password, database, port)
+func InitDB(dbConf config.DatabaseConfig) (*gorm.DB, error) {
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%v sslmode=%s", dbConf.Host, dbConf.User, dbConf.Password, dbConf.Dbname, dbConf.Port, dbConf.SslMode)
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		// 可以在这里关闭外键约束检查（如果迁移遇到循环依赖报错的话）
 		// DisableForeignKeyConstraintWhenMigrating: true,

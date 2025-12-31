@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"hawker-backend/logic"
 	"hawker-backend/models"
 	"hawker-backend/repositories"
@@ -103,6 +104,23 @@ func (h *ProductHandler) UpdateHawkingConfig(c *gin.Context) {
 	product.HawkingMode = input.Mode // 同步内存对象用于预览
 	c.JSON(http.StatusOK, gin.H{
 		"message":        "叫卖配置已更新",
-		"script_preview": logic.GenerateHawkingScript(*product),
+		"script_preview": logic.GenerateSmartScript(*product),
 	})
+}
+
+func (h *ProductHandler) SyncProductsHandler(c *gin.Context) {
+
+	var items []models.ProductDTO
+	if err := c.ShouldBindJSON(&items); err != nil {
+		c.JSON(400, gin.H{"error": "无效的数据格式"})
+		return
+	}
+
+	err := h.Repo.SyncProducts(items)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "同步失败: " + err.Error()})
+	} else {
+		c.JSON(200, gin.H{"status": "ok", "message": fmt.Sprintf("同步成功，共处理 %d 条数据", len(items))})
+	}
 }

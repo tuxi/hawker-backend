@@ -39,4 +39,15 @@ type Product struct {
 
 	LastHawkedAt *time.Time `json:"last_hawked_at"` // 上次叫卖完成时间
 
+	HawkingStatus string    `gorm:"default:'idle'"` // idle, processing
+	LockedAt      time.Time // 用于处理超时锁
+
+	LastScriptHash string `json:"last_script_hash"` // 存储文案的 MD5 或 SHA1，防止重复文案重复合成是纯粹的浪费
+}
+
+type ProductDTO struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	Unit         string    `json:"unit"`
+	CategoryName string    `json:"category_name"`
 }

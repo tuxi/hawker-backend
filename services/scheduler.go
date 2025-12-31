@@ -2,10 +2,15 @@ package services
 
 import (
 	"context"
+	"crypto/md5"
+	"fmt"
 	"hawker-backend/logic"
 	"hawker-backend/models"
 	"hawker-backend/repositories"
 	"log"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,6 +18,7 @@ type HawkingScheduler struct {
 	productRepo  repositories.ProductRepository
 	audioService AudioService
 	hub          *Hub
+	isRunning    int32 // 使用原子操作标记
 }
 
 func NewHawkingScheduler(repo repositories.ProductRepository, audio AudioService, hub *Hub) *HawkingScheduler {
@@ -24,8 +30,14 @@ func NewHawkingScheduler(repo repositories.ProductRepository, audio AudioService
 }
 
 func (s *HawkingScheduler) Start(ctx context.Context) {
+	// 确保智能启动一个实例
+	if !atomic.CompareAndSwapInt32(&s.isRunning, 0, 1) {
+		log.Println("⚠️ 调度引擎已经在运行中，请勿重复启动")
+		return
+	}
 	// 使用显式的协程管理
 	go func() {
+		defer atomic.StoreInt32(&s.isRunning, 0)
 		log.Println("🚀 叫卖调度引擎已启动...")
 		for {
 			select {
@@ -58,25 +70,47 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 // executeHawking 封装具体的执行步骤，保持 Start 方法简洁
 func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product) {
 	// 1. 生成文案
-	script := logic.GenerateHawkingScript(*p)
+	script := logic.GenerateSmartScript(*p)
 
-	// 2. 合成语音
-	audioURL, err := s.audioService.GenerateAudio(ctx, script, p.ID.String())
-	if err != nil {
-		log.Printf("❌ 语音合成失败 [%s]: %v", p.Name, err)
-		return
+	// 2. 计算当前文案的哈希值
+	currentHash := fmt.Sprintf("%x", md5.Sum([]byte(script)))
+
+	var audioURL string
+	var err error
+
+	// 3. 缓存校验
+	// 如果文案没变，且对应的音频文件确实存在于磁盘上
+	if p.LastScriptHash == currentHash && s.checkAudioExists(p.ID.String()) {
+		audioURL = fmt.Sprintf("/static/audio/%s.mp3", p.ID.String())
+		log.Printf("♻️ 文案未变，复用缓存音频: %s", p.Name)
+	} else {
+		// 4. 文案变了或文件丢失，调用火山引擎合成
+		log.Printf("🎙️ 文案已更新，开始实时合成: %s", p.Name)
+		audioURL, err = s.audioService.GenerateAudio(ctx, script, p.ID.String())
+		if err != nil {
+			log.Printf("❌ 语音合成失败: %v", err)
+			s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
+			return
+		}
+		// 更新哈希值准备存入数据库
+		p.LastScriptHash = currentHash
 	}
 
-	// 3. WebSocket 广播推送
+	// 5. 推送并更新状态
 	s.hub.Broadcast(audioURL, script)
-	log.Printf("📢 正在叫卖: %s | 文案: %s", p.Name, script)
 
-	// 4. 更新数据库状态 (重置优先级并记录时间)
 	updates := map[string]interface{}{
-		"last_hawked_at": time.Now(),
-		"priority":       0, // 执行完后重置插播优先级
+		"last_script_hash": p.LastScriptHash,
+		"last_hawked_at":   time.Now(),
+		"priority":         0,
+		"hawking_status":   "idle",
 	}
-	if err := s.productRepo.UpdateHawkingStatus(p.ID.String(), updates); err != nil {
-		log.Printf("❌ 更新叫卖状态失败: %v", err)
-	}
+	s.productRepo.UpdateHawkingStatus(p.ID.String(), updates)
+}
+
+// 辅助方法：检查本地文件是否还在（防止被手动删了）
+func (s *HawkingScheduler) checkAudioExists(identifier string) bool {
+	filePath := filepath.Join("./static/audio", identifier+".mp3")
+	_, err := os.Stat(filePath)
+	return err == nil
 }
