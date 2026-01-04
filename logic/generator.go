@@ -34,13 +34,8 @@ var (
 	closings = []string{"快来带一点！", "先到先得啊！", "晚了就卖光了！", "欢迎选购！"}
 )
 
-func GenerateSmartScript(p models.Product) string {
+func GenerateSmartScript(p models.Product, promoPrice float64, anchorPrice float64) string {
 	rand.Seed(time.Now().UnixNano())
-
-	price := p.Price
-	if p.CustomPrice > 0 {
-		price = p.CustomPrice
-	}
 
 	// 1. 随机选开场
 	script := openings[rand.Intn(len(openings))]
@@ -68,9 +63,22 @@ func GenerateSmartScript(p models.Product) string {
 			break
 		}
 	}
-
-	// 5. 组合价格
-	script += fmt.Sprintf("今天只要%v块一%s！", price, p.Unit)
+	
+	// 5. 【核心改进】组合价格逻辑
+	if promoPrice > 0 {
+		if anchorPrice > promoPrice {
+			// 模式 A: 强调折扣力度（锚点价）
+			script += fmt.Sprintf("平时都要 %.2f 的%s，今天摊位搞活动，", anchorPrice, p.Name)
+			script += fmt.Sprintf("只要 %.2f 块一%s！", promoPrice, p.Unit)
+			script += "真正的亏本处理，走过路过千万别错过！"
+		} else {
+			// 模式 B: 单纯强调现价
+			script += fmt.Sprintf("咱家的%s，今天只要 %.2f 块一%s！", p.Name, promoPrice, p.Unit)
+		}
+	} else {
+		// 模式 C: 兜底使用数据库价格
+		script += fmt.Sprintf("咱家的%s，现在只要 %.2f 块一%s！", p.Name, p.Price, p.Unit)
+	}
 
 	// 6. 加上结尾和模式后缀
 	if p.HawkingMode == models.ModeLowStock {

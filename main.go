@@ -7,7 +7,6 @@ import (
 	"hawker-backend/handlers"
 	"hawker-backend/repositories"
 	"hawker-backend/services"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,15 +25,11 @@ func main() {
 		panic(err)
 	}
 
-	// 1. 初始化 Repositories
+	//  初始化 Repositories
 	productRepo := repositories.NewProductRepository(db)
 	categoryRepo := repositories.NewCategoryRepository(db)
 
-	// 2. 初始化 Handlers (注入 Repo)
-	productHandler := handlers.NewProductHandler(productRepo)
-	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
-
-	// 1. 初始化语音服务
+	// 初始化语音服务
 	audioService := services.NewDoubaoAudioService(
 		cfg.Volcengine.AppID,
 		cfg.Volcengine.AccessToken,
@@ -43,27 +38,41 @@ func main() {
 		cfg.Server.StaticDir,
 	)
 
-	hub := services.GlobalHub
+	hub := services.NewHub()
+	go hub.Run()
 
 	// 注入调度器
 	scheduler := services.NewHawkingScheduler(productRepo, audioService, hub)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	scheduler.Start(ctx)
+
+	// 初始化 Handlers (注入 Repo)
+	productHandler := handlers.NewProductHandler(productRepo, scheduler)
+	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
+	
+	scheduler.Start(context.Background())
 
 	// 3. 注册路由
 	r := gin.Default()
+	r.Static("/static", "./static")
 	v1 := r.Group("/api/v1")
 	{
 		// Product 路由
 		v1.POST("/products", productHandler.CreateProduct)
 		v1.GET("/products", productHandler.GetProducts)
-		v1.PATCH("/products/:id/hawking", productHandler.UpdateHawkingConfig)
+		//v1.PATCH("/products/:id/hawking", productHandler.UpdateHawkingConfig)
 		v1.POST("/products/sync", productHandler.SyncProductsHandler)
+		v1.POST("/hawking/start", productHandler.StartHawkingHandler)
+		// 叫卖任务管理
+		v1.POST("/hawking/tasks", productHandler.AddHawkingTaskHandler)          // 添加任务
+		v1.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
 
 		// Category 路由
 		v1.POST("/categories", categoryHandler.CreateCategory)
 		v1.GET("/categories", categoryHandler.GetAll)
+
+		// 3. 注册 WebSocket 路由
+		v1.GET("/ws", func(c *gin.Context) {
+			handlers.ServeWs(hub, c)
+		})
 	}
 	_ = r.Run(":8080")
 }

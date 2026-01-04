@@ -30,7 +30,7 @@ type Product struct {
 	// 手动控制的叫卖参数
 	HawkingMode HawkingMode `gorm:"default:0" json:"hawking_mode"`   // 当前模式
 	IsHawking   bool        `gorm:"default:false" json:"is_hawking"` // 是否正在叫卖
-	CustomPrice float64     `json:"custom_price"`                    // 叫卖时的临时价格（比如促销价）
+	//CustomPrice float64     `json:"custom_price"`                    // 叫卖时的临时价格（比如促销价）
 
 	// 调度元数据
 	Weight      int `gorm:"default:1" json:"weight"`        // 权重：1-10，决定在轮询中出现的频率
