@@ -34,7 +34,20 @@ var (
 	closings = []string{"快来带一点！", "先到先得啊！", "晚了就卖光了！", "欢迎选购！"}
 )
 
-func GenerateSmartScript(p models.Product, promoPrice float64, anchorPrice float64) string {
+func GenerateSmartScript(p models.Product, req *models.HawkingTask) string {
+	// 1. 确定最终使用的单位
+	finalUnit := p.Unit // 默认使用数据库单位
+	if req.Unit != "" {
+		finalUnit = req.Unit // 如果前端传了（如 "3个"），则覆盖
+	}
+
+	// 2. 优化语音语感
+	// 如果单位是 "斤"，通常说 "一斤"；如果单位是 "3个"，直接说 "10元3个"
+	unitSpeech := finalUnit
+	if len([]rune(finalUnit)) == 1 { // 如果只是单字单位如 "斤"、"份"
+		unitSpeech = "一" + finalUnit
+	}
+
 	rand.Seed(time.Now().UnixNano())
 
 	// 1. 随机选开场
@@ -63,21 +76,32 @@ func GenerateSmartScript(p models.Product, promoPrice float64, anchorPrice float
 			break
 		}
 	}
-	
+
 	// 5. 【核心改进】组合价格逻辑
-	if promoPrice > 0 {
-		if anchorPrice > promoPrice {
-			// 模式 A: 强调折扣力度（锚点价）
-			script += fmt.Sprintf("平时都要 %.2f 的%s，今天摊位搞活动，", anchorPrice, p.Name)
-			script += fmt.Sprintf("只要 %.2f 块一%s！", promoPrice, p.Unit)
-			script += "真正的亏本处理，走过路过千万别错过！"
+	if req.MinQty > 0 && req.Price > 0 {
+		// 例子：2斤以上 9.99 一斤
+		conditionStr := ""
+		if req.ConditionUnit != "" {
+			conditionStr = fmt.Sprintf("%.0f%s以上", req.MinQty, req.ConditionUnit)
 		} else {
-			// 模式 B: 单纯强调现价
-			script += fmt.Sprintf("咱家的%s，今天只要 %.2f 块一%s！", p.Name, promoPrice, p.Unit)
+			conditionStr = fmt.Sprintf("买满%.0f件", req.MinQty)
+		}
+		if req.OriginalPrice > 0 {
+			script += fmt.Sprintf("咱家的%s，原价 %.2f，现在搞活动，", p.Name, req.OriginalPrice)
+		}
+		script += fmt.Sprintf("只要您%s，通通只要 %.2f 一%s！", conditionStr, req.Price, req.Unit)
+		script += "多买多划算，赶快来挑两条！"
+
+	} else if req.Price > 0 {
+		if req.OriginalPrice > req.Price {
+			script += fmt.Sprintf("平时都要 %.2f 的%s，今天摊位搞活动，", req.OriginalPrice, p.Name)
+			script += fmt.Sprintf("只要 %.2f 块%s！", req.Price, unitSpeech) // 👈 灵活组合
+		} else {
+			script += fmt.Sprintf("咱家的%s，今天只要 %.2f 块%s！", p.Name, req.Price, unitSpeech)
 		}
 	} else {
 		// 模式 C: 兜底使用数据库价格
-		script += fmt.Sprintf("咱家的%s，现在只要 %.2f 块一%s！", p.Name, p.Price, p.Unit)
+		script += fmt.Sprintf("咱家的%s，现在只要 %.2f 块%s！", p.Name, p.Price, unitSpeech)
 	}
 
 	// 6. 加上结尾和模式后缀

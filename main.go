@@ -47,7 +47,7 @@ func main() {
 	// 初始化 Handlers (注入 Repo)
 	productHandler := handlers.NewProductHandler(productRepo, scheduler)
 	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
-	
+
 	scheduler.Start(context.Background())
 
 	// 3. 注册路由
@@ -64,6 +64,7 @@ func main() {
 		// 叫卖任务管理
 		v1.POST("/hawking/tasks", productHandler.AddHawkingTaskHandler)          // 添加任务
 		v1.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
+		v1.GET("/hawking/tasks", productHandler.GetHawkingTasksHandler)
 
 		// Category 路由
 		v1.POST("/categories", categoryHandler.CreateCategory)

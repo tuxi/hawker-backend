@@ -176,6 +176,16 @@ func (h *ProductHandler) StartHawkingHandler(c *gin.Context) {
 	})
 }
 
+// 获取所有叫卖任务
+func (h *ProductHandler) GetHawkingTasksHandler(c *gin.Context) {
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot()
+
+	c.JSON(200, gin.H{
+		"message": "添加成功",
+		"tasks":   currentTasks, // Swift 端拿到这个直接更新数组
+	})
+}
+
 // AddHawkingTaskHandler 添加叫卖任务
 func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 	var req models.AddTaskReq

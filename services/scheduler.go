@@ -110,6 +110,8 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 				s.taskMutex.Lock()
 				if t, ok := s.ActiveTasks[id]; ok {
 					t.IsSynthesized = true
+					t.AudioURL = audioURL
+					t.Text = script
 					s.ActiveTasks[id] = t
 				}
 				s.taskMutex.Unlock()
@@ -154,31 +156,41 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	// 1. 生成文案
 	script = task.Text
 	if len(task.Text) == 0 {
-		script = logic.GenerateSmartScript(*p, task.Price, task.OriginalPrice)
+		script = logic.GenerateSmartScript(*p, task)
 		log.Printf("📝 为 [%s] 生成文案: %s", p.Name, script)
 	}
 
 	// 2. 计算当前文案的哈希值
 	currentHash := fmt.Sprintf("%x", md5.Sum([]byte(script)))
+	// 取 Hash 的前 8 位作为后缀即可，既保证唯一性又让文件名不太长
+	shortHash := currentHash[:8]
+	// 新的文件名格式：ProductID_ShortHash.mp3
+	newFileName := fmt.Sprintf("%s_%s", p.ID.String(), shortHash)
 
 	// 3. 缓存校验
 	// 如果文案没变，且对应的音频文件确实存在于磁盘上
-	if p.LastScriptHash == currentHash && s.checkAudioExists(p.ID.String()) {
-		audioURL = fmt.Sprintf("/static/audio/%s.mp3", p.ID.String())
+	if s.checkAudioExists(newFileName) {
+		audioURL = fmt.Sprintf("/static/audio/%s.mp3", newFileName)
 		log.Printf("♻️ 文案未变，复用缓存音频: %s", p.Name)
 	} else {
 		// 4. 文案变了或文件丢失，调用火山引擎合成
 		log.Printf("🎙️ 文案已更新，正在调用火山引擎合成音频: %s", p.Name)
-		audioURL, err = s.audioService.GenerateAudio(ctx, script, p.ID.String())
+		audioURL, err = s.audioService.GenerateAudio(ctx, script, newFileName)
 		if err != nil {
 			log.Printf("❌ 语音合成失败 [%s]: %v", p.Name, err)
 			s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
 			return
 		}
+
 		log.Printf("✅ 音频合成成功! 文件路径: %s", audioURL) // 👈 新增：确认合成完成
-		// 更新哈希值准备存入数据库
-		p.LastScriptHash = currentHash
+
+		// 5. 【可选】清理旧版本的音频文件
+		// 为了防止磁盘被同一个商品的各种历史版本占满，可以异步删掉该商品旧 Hash 的文件
+		go s.cleanupOldVersions(p.ID.String(), newFileName)
 	}
+
+	// 更新哈希值准备存入数据库
+	p.LastScriptHash = currentHash
 
 	updates := map[string]interface{}{
 		"last_script_hash": p.LastScriptHash,
@@ -213,6 +225,9 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		Text:          req.Text,
 		Price:         req.Price,
 		OriginalPrice: req.OriginalPrice,
+		Unit:          req.Unit, // 👈 保存单位
+		MinQty:        req.MinQty,
+		ConditionUnit: req.ConditionUnit,
 		Scene:         scene,
 		IsSynthesized: false, // 每次添加或更新，都重置为 false 以触发重新合成
 	}
@@ -265,4 +280,13 @@ func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, audioURL string
 		},
 	}
 	s.Hub.Broadcast(payload)
+}
+func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileName string) {
+	// 查找 static/audio/ 目录下所有以 productID 开头但不是 currentFullFileName 的文件并删除
+	files, _ := filepath.Glob(filepath.Join("static/audio", productID+"_*.mp3"))
+	for _, f := range files {
+		if !strings.Contains(f, currentFullFileName) {
+			os.Remove(f)
+		}
+	}
 }

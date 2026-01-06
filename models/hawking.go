@@ -7,6 +7,11 @@ type HawkingTask struct {
 	Scene         string  `json:"scene"`
 	Price         float64 `json:"price"`          // 👈 新增：临时现价
 	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价
+	Unit          string  // 存储本次叫卖的特定单位
+
+	// --- 新增条件促销字段 ---
+	MinQty        float64 `json:"min_qty"`        // 触发优惠的门槛数量，如 2
+	ConditionUnit string  `json:"condition_unit"` // 门槛单位，如 "斤" 或 "条"
 
 	// 关键：标记该任务是否已经完成合成并下发过
 	IsSynthesized bool
@@ -23,6 +28,11 @@ type AddTaskReq struct {
 	Text          string  `json:"text"`           // 用户完全自定义的文案
 	Price         float64 `json:"price"`          // 现价
 	OriginalPrice float64 `json:"original_price"` // 原价
+	Unit          string  `json:"unit"`           // 👈 接收前端传来的 "3个" 或 "斤"
+
+	// --- 新增条件促销字段 ---
+	MinQty        float64 `json:"min_qty"`        // 触发优惠的门槛数量，如 2
+	ConditionUnit string  `json:"condition_unit"` // 门槛单位，如 "斤" 或 "条"
 }
 
 // 定义一个统一的消息外壳
