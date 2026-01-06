@@ -195,9 +195,9 @@ func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 
 	// --- 关键点：直接返回全量列表 ---
 	currentTasks := h.Scheduler.GetActiveTasksSnapshot()
-
-	// (可选) 仍然保留广播，为了通知其他可能在线的设备
-	h.Scheduler.Hub.BroadcastTaskBundle(currentTasks)
+	//
+	//// (可选) 仍然保留广播，为了通知其他可能在线的设备
+	//h.Scheduler.Hub.BroadcastTaskBundle(currentTasks)
 
 	c.JSON(200, gin.H{
 		"message": "添加成功",
@@ -214,7 +214,7 @@ func (h *ProductHandler) RemoveHawkingTaskHandler(c *gin.Context) {
 	currentTasks := h.Scheduler.GetActiveTasksSnapshot()
 
 	// (可选) 仍然广播给其他设备
-	h.Scheduler.Hub.BroadcastTaskBundle(currentTasks)
+	//h.Scheduler.Hub.BroadcastTaskBundle(currentTasks)
 
 	c.JSON(200, gin.H{
 		"message": "移除成功",

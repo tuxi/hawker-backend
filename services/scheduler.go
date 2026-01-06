@@ -37,6 +37,7 @@ func NewHawkingScheduler(repo repositories.ProductRepository, audio AudioService
 		taskNotify:   make(chan struct{}, 1), // 缓冲大小设置为1即可
 	}
 }
+
 func (s *HawkingScheduler) Start(ctx context.Context) {
 	if !atomic.CompareAndSwapInt32(&s.IsRunning, 0, 1) {
 		return
@@ -57,14 +58,17 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 		for {
 			// --- A. 获取任务列表 ---
 			s.taskMutex.RLock()
-			var pIDs []string
-			for id := range s.ActiveTasks {
-				pIDs = append(pIDs, id)
+			// 找出所有活跃，且【尚未合成】的任务
+			var pendingIDs []string
+			for id, task := range s.ActiveTasks {
+				if !task.IsSynthesized {
+					pendingIDs = append(pendingIDs, id)
+				}
 			}
 			s.taskMutex.RUnlock()
 
 			// --- B. 没活干就死等信号 ---
-			if len(pIDs) == 0 {
+			if len(pendingIDs) == 0 {
 				select {
 				case <-ctx.Done():
 					log.Println("🔔 收到ctx.Done 信号")
@@ -76,7 +80,7 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 			}
 
 			// --- C. 有活干，逐个处理 ---
-			for _, id := range pIDs {
+			for _, id := range pendingIDs {
 				s.taskMutex.RLock()
 				task, ok := s.ActiveTasks[id]
 				s.taskMutex.RUnlock()
@@ -87,17 +91,37 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 				// 🌟 重点排查：FindByID 是否有数据库连接泄露导致阻塞？
 				product, err := s.productRepo.FindByID(id)
 				if err != nil {
+					s.RemoveTask(id) // 找不到商品才真正移除
+					continue
+				}
+
+				// 执行合成
+				log.Printf("🎙️ 合成新任务: %s", product.Name)
+
+				// 🌟 重点排查：executeHawking 内部是否有 30 秒的超时？
+				// 如果这个函数不返回，下面的信号监听永远不生效
+				audioURL, script, err := s.executeHawking(ctx, product, task)
+				if err != nil {
 					s.RemoveTask(id)
 					continue
 				}
 
-				log.Printf("🎙️ 开始叫卖: %s", product.Name)
+				// 【改进点 1】：合成完后，不 Remove，只标记为已合成
+				s.taskMutex.Lock()
+				if t, ok := s.ActiveTasks[id]; ok {
+					t.IsSynthesized = true
+					s.ActiveTasks[id] = t
+				}
+				s.taskMutex.Unlock()
 
-				// 🌟 重点排查：executeHawking 内部是否有 30 秒的超时？
-				// 如果这个函数不返回，下面的信号监听永远不生效
-				s.executeHawking(ctx, product, task)
+				// 【改进点 2】：广播最新的全量列表给 App（包含已处理和未处理的）
+				// 这样 App 的“叫卖中”列表就不会因为合成完而消失
+				s.Hub.BroadcastTaskBundle(s.GetActiveTasksSnapshot())
 
-				s.RemoveTask(id)
+				//  推送并更新状态
+				log.Printf("📡 正在通过 WebSocket 广播指令...")
+				s.broadcastPlayEvent(product, audioURL, script) // 仅发送当前正在处理的这一个
+				log.Printf("🎉 广播已发出，等待 App 播放")        // 👈 新增：确认发送成功
 
 				// 休息，且能随时响应退出
 				sleepTime := 10
@@ -122,13 +146,13 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 }
 
 // executeHawking 封装具体的执行步骤，保持 Start 方法简洁
-func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product, task *models.HawkingTask) {
+func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product, task *models.HawkingTask) (audioURL string, script string, err error) {
 	if task == nil {
 		return
 	}
 
 	// 1. 生成文案
-	script := task.Text
+	script = task.Text
 	if len(task.Text) == 0 {
 		script = logic.GenerateSmartScript(*p, task.Price, task.OriginalPrice)
 		log.Printf("📝 为 [%s] 生成文案: %s", p.Name, script)
@@ -136,9 +160,6 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 
 	// 2. 计算当前文案的哈希值
 	currentHash := fmt.Sprintf("%x", md5.Sum([]byte(script)))
-
-	var audioURL string
-	var err error
 
 	// 3. 缓存校验
 	// 如果文案没变，且对应的音频文件确实存在于磁盘上
@@ -159,11 +180,6 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 		p.LastScriptHash = currentHash
 	}
 
-	// 5. 推送并更新状态
-	log.Printf("📡 正在通过 WebSocket 广播指令...")
-	s.Hub.BroadcastHawking(audioURL, script, p.ID.String())
-	log.Printf("🎉 广播已发出，等待 App 播放") // 👈 新增：确认发送成功
-
 	updates := map[string]interface{}{
 		"last_script_hash": p.LastScriptHash,
 		"last_hawked_at":   time.Now(),
@@ -171,6 +187,7 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 		"hawking_status":   "idle",
 	}
 	s.productRepo.UpdateHawkingStatus(p.ID.String(), updates)
+	return
 }
 
 // 辅助方法：检查本地文件是否还在（防止被手动删了）
@@ -197,10 +214,11 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		Price:         req.Price,
 		OriginalPrice: req.OriginalPrice,
 		Scene:         scene,
+		IsSynthesized: false, // 每次添加或更新，都重置为 false 以触发重新合成
 	}
 	s.taskMutex.Unlock()
 
-	// 发送通知
+	// 触发信号唤醒 Start 中的 for 循环
 	select {
 	case s.taskNotify <- struct{}{}:
 		log.Println("✅ 信号发送成功")
@@ -225,4 +243,26 @@ func (s *HawkingScheduler) GetActiveTasksSnapshot() []*models.HawkingTask {
 		list = append(list, task)
 	}
 	return list
+}
+
+// 场景 A：全量同步 (配置更新)
+func (s *HawkingScheduler) broadcastConfig() {
+	payload := models.WSMessage{
+		Type: "TASK_CONF_UPDATE",
+		Data: s.GetActiveTasksSnapshot(), // 返回 []HawkingTask
+	}
+	s.Hub.Broadcast(payload)
+}
+
+// 场景 B：单次播放指令
+func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, audioURL string, script string) {
+	payload := models.WSMessage{
+		Type: "HAWKING_PLAY_EVENT",
+		Data: map[string]interface{}{
+			"product_id": p.ID.String(),
+			"audio_url":  audioURL,
+			"text":       script,
+		},
+	}
+	s.Hub.Broadcast(payload)
 }

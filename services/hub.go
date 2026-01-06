@@ -19,7 +19,7 @@ type Client struct {
 // Hub 负责维护所有活跃客户端并处理消息广播
 type Hub struct {
 	Clients    map[*Client]bool
-	Broadcast  chan []byte  // 待广播的消息管道
+	broadcast  chan []byte  // 待广播的消息管道
 	Register   chan *Client // 注册请求管道
 	Unregister chan *Client // 注销请求管道
 	mu         sync.Mutex
@@ -27,7 +27,7 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		Broadcast:  make(chan []byte),
+		broadcast:  make(chan []byte),
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		Clients:    make(map[*Client]bool),
@@ -46,7 +46,7 @@ func (h *Hub) Run() {
 				close(client.Send)
 				log.Println("👋 客户端已断开")
 			}
-		case message := <-h.Broadcast:
+		case message := <-h.broadcast:
 			// 异步分发给所有客户端，不阻塞广播管道
 			for client := range h.Clients {
 				select {
@@ -60,16 +60,9 @@ func (h *Hub) Run() {
 	}
 }
 
-// BroadcastHawking 暴露给调度器使用的结构化广播方法
-func (h *Hub) BroadcastHawking(audioURL string, text string, productID string) {
-	payload := map[string]string{
-		"type":       "HAWKING_TASK",
-		"audio_url":  audioURL,
-		"text":       text,
-		"product_id": productID,
-	}
+func (h *Hub) Broadcast(payload models.WSMessage) {
 	message, _ := json.Marshal(payload)
-	h.Broadcast <- message
+	h.broadcast <- message
 }
 
 func (h *Hub) BroadcastTaskBundle(tasks []*models.HawkingTask) {
@@ -78,7 +71,7 @@ func (h *Hub) BroadcastTaskBundle(tasks []*models.HawkingTask) {
 		Data: tasks,
 	}
 	payload, _ := json.Marshal(bundle)
-	h.Broadcast <- payload
+	h.broadcast <- payload
 }
 
 // --- Client 相关方法 ---

@@ -7,6 +7,9 @@ type HawkingTask struct {
 	Scene         string  `json:"scene"`
 	Price         float64 `json:"price"`          // 👈 新增：临时现价
 	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价
+
+	// 关键：标记该任务是否已经完成合成并下发过
+	IsSynthesized bool
 }
 
 // 定义推送给 Swift 的包装结构
@@ -20,4 +23,10 @@ type AddTaskReq struct {
 	Text          string  `json:"text"`           // 用户完全自定义的文案
 	Price         float64 `json:"price"`          // 现价
 	OriginalPrice float64 `json:"original_price"` // 原价
+}
+
+// 定义一个统一的消息外壳
+type WSMessage struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
 }
