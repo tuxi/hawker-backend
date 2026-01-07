@@ -3,11 +3,15 @@ package models
 type HawkingTask struct {
 	ProductID     string  `json:"product_id"`
 	AudioURL      string  `json:"audio_url"`
+	IntroURL      string  `json:"intro_url"`
 	Text          string  `json:"text"` // 如果用户传了全文，优先用这个
 	Scene         string  `json:"scene"`
 	Price         float64 `json:"price"`          // 👈 新增：临时现价
 	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价
 	Unit          string  // 存储本次叫卖的特定单位
+
+	VoiceType string `json:"voice_type"`
+	IntroID   string `json:"intro_id"`
 
 	// --- 新增条件促销字段 ---
 	MinQty        float64 `json:"min_qty"`        // 触发优惠的门槛数量，如 2
@@ -33,6 +37,9 @@ type AddTaskReq struct {
 	// --- 新增条件促销字段 ---
 	MinQty        float64 `json:"min_qty"`        // 触发优惠的门槛数量，如 2
 	ConditionUnit string  `json:"condition_unit"` // 门槛单位，如 "斤" 或 "条"
+
+	VoiceType string `json:"voice_type"` // 👈 用户选定的音色，如 "sunny_boy"
+	IntroID   string `json:"intro_id"`   // 👈 用户指定的开场白 ID，"none" 表示不要
 }
 
 // 定义一个统一的消息外壳
@@ -40,3 +47,21 @@ type WSMessage struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
 }
+
+// 开场白模版
+type IntroTemplate struct {
+	ID        string
+	Text      string
+	VoiceType string // 音色标识
+	SceneTag  string // 如: "default", "morning", "evening", "flash_sale"
+	TimeRange [2]int // 适用小时段，如 [17, 20] 表示下午 5点到 8点
+	AudioURL  string // 预合成好的音频路径
+}
+
+// 定义音色映射常量
+const (
+	VoiceSunnyBoy  = "sunny_boy"  // 阳光青年：适合水果、蔬菜，听起来新鲜有朝气
+	VoiceSoftGirl  = "soft_girl"  // 亲切大姐：适合熟食、肉类，听起来靠谱、像邻居
+	VoicePromoBoss = "promo_boss" // 卖货老板：适合海鲜、大促，嗓门大，有张力
+	VoiceSweetGirl = "sweet_girl" // 甜美客服：适合零食、甜品，声音细腻
+)

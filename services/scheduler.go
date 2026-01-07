@@ -18,6 +18,7 @@ import (
 
 type HawkingScheduler struct {
 	productRepo  repositories.ProductRepository
+	introRepo    repositories.IntroRepository // 👈 新增：开场白仓库
 	audioService AudioService
 	Hub          *Hub
 	IsRunning    int32 // 使用原子操作标记
@@ -28,9 +29,10 @@ type HawkingScheduler struct {
 	taskNotify chan struct{} //用于通知新任务到达
 }
 
-func NewHawkingScheduler(repo repositories.ProductRepository, audio AudioService, hub *Hub) *HawkingScheduler {
+func NewHawkingScheduler(repo repositories.ProductRepository, introRepo repositories.IntroRepository, audio AudioService, hub *Hub) *HawkingScheduler {
 	return &HawkingScheduler{
 		productRepo:  repo,
+		introRepo:    introRepo,
 		audioService: audio,
 		Hub:          hub,
 		ActiveTasks:  make(map[string]*models.HawkingTask),
@@ -114,6 +116,7 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 					t.Text = script
 					s.ActiveTasks[id] = t
 				}
+				currentTask := s.ActiveTasks[id] // 获取最新指针
 				s.taskMutex.Unlock()
 
 				// 【改进点 2】：广播最新的全量列表给 App（包含已处理和未处理的）
@@ -122,8 +125,8 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 
 				//  推送并更新状态
 				log.Printf("📡 正在通过 WebSocket 广播指令...")
-				s.broadcastPlayEvent(product, audioURL, script) // 仅发送当前正在处理的这一个
-				log.Printf("🎉 广播已发出，等待 App 播放")        // 👈 新增：确认发送成功
+				s.broadcastPlayEvent(product, currentTask) // 仅发送当前正在处理的这一个
+				log.Printf("🎉 广播已发出，等待 App 播放")   // 👈 新增：确认发送成功
 
 				// 休息，且能随时响应退出
 				sleepTime := 10
@@ -165,7 +168,8 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	// 取 Hash 的前 8 位作为后缀即可，既保证唯一性又让文件名不太长
 	shortHash := currentHash[:8]
 	// 新的文件名格式：ProductID_ShortHash.mp3
-	newFileName := fmt.Sprintf("%s_%s", p.ID.String(), shortHash)
+	// 🌟 文件名哈希中也建议加入音色 ID，防止同文案不同音色覆盖
+	newFileName := fmt.Sprintf("%s_%s_%s", p.ID.String(), task.VoiceType, shortHash)
 
 	// 3. 缓存校验
 	// 如果文案没变，且对应的音频文件确实存在于磁盘上
@@ -175,7 +179,7 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	} else {
 		// 4. 文案变了或文件丢失，调用火山引擎合成
 		log.Printf("🎙️ 文案已更新，正在调用火山引擎合成音频: %s", p.Name)
-		audioURL, err = s.audioService.GenerateAudio(ctx, script, newFileName)
+		audioURL, err = s.audioService.GenerateAudio(ctx, script, newFileName, task.VoiceType)
 		if err != nil {
 			log.Printf("❌ 语音合成失败 [%s]: %v", p.Name, err)
 			s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
@@ -228,6 +232,8 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		Unit:          req.Unit, // 👈 保存单位
 		MinQty:        req.MinQty,
 		ConditionUnit: req.ConditionUnit,
+		VoiceType:     req.VoiceType,
+		IntroID:       req.IntroID,
 		Scene:         scene,
 		IsSynthesized: false, // 每次添加或更新，都重置为 false 以触发重新合成
 	}
@@ -270,13 +276,19 @@ func (s *HawkingScheduler) broadcastConfig() {
 }
 
 // 场景 B：单次播放指令
-func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, audioURL string, script string) {
+func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.HawkingTask) {
+	// 获取当前应该使用的开场白
+	// 注意：这里传入的 AddTaskReq 参数可以从 task 中提取
+	introURL := s.getIntroAudio(task)
+
 	payload := models.WSMessage{
 		Type: "HAWKING_PLAY_EVENT",
 		Data: map[string]interface{}{
 			"product_id": p.ID.String(),
-			"audio_url":  audioURL,
-			"text":       script,
+			"audio_url":  task.AudioURL,
+			"intro_url":  introURL, // 👈 新增：发给 App 的开场白路径
+			"text":       task.Text,
+			"voice_type": task.VoiceType,
 		},
 	}
 	s.Hub.Broadcast(payload)
@@ -289,4 +301,21 @@ func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileN
 			os.Remove(f)
 		}
 	}
+}
+
+// 辅助方法：匹配逻辑
+func (s *HawkingScheduler) getIntroAudio(task *models.HawkingTask) string {
+	// 1. 如果任务指定了 IntroID
+	if task.IntroID != "" && task.IntroID != "none" {
+		return s.introRepo.GetPathByID(task.IntroID, task.VoiceType)
+	}
+
+	// 2. 自动匹配时间段
+	hour := time.Now().Hour()
+	template := s.introRepo.FindByTime(hour, task.VoiceType)
+	if template != nil {
+		return template.AudioURL
+	}
+
+	return ""
 }

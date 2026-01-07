@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hawker-backend/models"
 	"io"
 	"net/http"
 	"os"
@@ -20,45 +21,45 @@ type DoubaoAudioService struct {
 	AppID       string
 	AccessToken string
 	ClusterID   string
-	VoiceType   string
 	StaticDir   string
 }
 
 // 对应官方的 defaultHeader: version=1, head_size=4, full_request, json, gzip
 var volcHeader = []byte{0x11, 0x10, 0x11, 0x00}
 
-func NewDoubaoAudioService(appID, token, cluster, voice, staticDir string) *DoubaoAudioService {
+func NewDoubaoAudioService(appID, token, cluster, staticDir string) *DoubaoAudioService {
 	return &DoubaoAudioService{
 		AppID:       appID,
 		AccessToken: token,
 		ClusterID:   cluster,
-		VoiceType:   voice,
 		StaticDir:   staticDir,
 	}
 }
-
-func (s *DoubaoAudioService) GenerateAudio(ctx context.Context, text string, identifier string) (string, error) {
+func (s *DoubaoAudioService) GenerateAudio(ctx context.Context, text string, identifier string, voiceType string) (string, error) {
+	// 1. 处理路径：支持 "intros/morning_sunny" 这种格式
 	fileName := fmt.Sprintf("%s.mp3", identifier)
 	fullPath := filepath.Join(s.StaticDir, fileName)
 
-	// 1. 准备 JSON 请求体并进行 Gzip 压缩 (官方 Demo 要求)
-	inputJSON := s.makeRequestJSON(text)
-	compressedJSON := s.gzipCompress(inputJSON)
+	// 🌟 核心改进：自动创建子目录 (例如 static/audio/intros/)
+	dir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory: %v", err)
+	}
 
-	// 2. 构造完整的二进制包: Header(4B) + PayloadSize(4B) + Payload
+	// 2. 准备数据包 (保持原有逻辑)
+	inputJSON := s.makeRequestJSON(text, voiceType)
+	compressedJSON := s.gzipCompress(inputJSON)
 	payloadSize := len(compressedJSON)
 	clientRequest := make([]byte, 0, 8+payloadSize)
 	clientRequest = append(clientRequest, volcHeader...)
-
 	sizeBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(sizeBytes, uint32(payloadSize))
 	clientRequest = append(clientRequest, sizeBytes...)
 	clientRequest = append(clientRequest, compressedJSON...)
 
-	// 3. 建立连接并发送
+	// 3. 建立连接
 	header := http.Header{"Authorization": []string{fmt.Sprintf("Bearer;%s", s.AccessToken)}}
 	addr := "wss://openspeech.bytedance.com/api/v1/tts/ws_binary"
-
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, addr, header)
 	if err != nil {
 		return "", fmt.Errorf("dial failed: %v", err)
@@ -69,17 +70,29 @@ func (s *DoubaoAudioService) GenerateAudio(ctx context.Context, text string, ide
 		return "", fmt.Errorf("write failed: %v", err)
 	}
 
-	// 4. 循环读取响应
-	file, err := os.Create(fullPath)
+	// 🌟 核心改进：使用临时文件防止残缺文件被 App 缓存
+	tempPath := fullPath + ".tmp"
+	file, err := os.Create(tempPath)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
 
+	// 4. 读取响应并写入
 	err = s.processResponse(conn, file)
+	file.Close() // 必须先关闭句柄才能重命名
+
 	if err != nil {
+		os.Remove(tempPath) // 出错则清理临时文件
 		return "", err
 	}
+
+	// 🌟 将临时文件原子性地重命名为最终文件
+	if err := os.Rename(tempPath, fullPath); err != nil {
+		return "", fmt.Errorf("failed to finalize audio file: %v", err)
+	}
+
+	// 返回给前端的相对 URL
+	// 注意：如果是 intros/xxx，这里拼接出来的也是 /static/audio/intros/xxx.mp3
 	return "/static/audio/" + fileName, nil
 }
 
@@ -92,7 +105,42 @@ func (s *DoubaoAudioService) gzipCompress(input []byte) []byte {
 	return b.Bytes()
 }
 
-func (s *DoubaoAudioService) makeRequestJSON(text string) []byte {
+func (s *DoubaoAudioService) makeRequestJSON(text string, voiceType string) []byte {
+	// 映射业务标识到火山引擎真实 ID
+	realVoiceID := "zh_male_M392_conversation_wvae_bigtts" // 默认阳光青年
+
+	//switch voiceType {
+	//case VoiceSunnyBoy:
+	//	realVoiceID = "bv001_streaming" // 灿烂阳光青年
+	//case VoiceSoftGirl:
+	//	realVoiceID = "bv051_streaming" // 亲切邻居大姐
+	//case VoicePromoBoss:
+	//	realVoiceID = "bv700_streaming" // 热血卖货大叔
+	//case VoiceSweetGirl:
+	//	realVoiceID = "bv002_streaming" // 甜美温柔少女
+	//}
+
+	switch voiceType {
+	case models.VoiceSunnyBoy:
+		realVoiceID = "zh_male_M392_conversation_wvae_bigtts" // 灿烂阳光青年
+	case models.VoiceSoftGirl:
+		realVoiceID = "zh_female_vv_uranus_bigtts" // 亲切邻居大姐
+	case models.VoicePromoBoss:
+		realVoiceID = "saturn_zh_male_shuanglangshaonian_tob" // 热血卖货大叔
+	case models.VoiceSweetGirl:
+		realVoiceID = "zh_female_xiaohe_uranus_bigtts" // 甜美温柔少女
+	}
+
+	// 如果你已经开通了，就用下面这一组：
+	/*
+	   mapping := map[string]string{
+	       "sunny_boy":  "bv001_streaming",
+	       "soft_girl":  "bv051_streaming",
+	       "promo_boss": "bv700_streaming",
+	       "sweet_girl": "bv002_streaming",
+	   }
+	*/
+
 	reqID := uuid.New().String()
 	req := map[string]interface{}{
 		"app": map[string]interface{}{
@@ -102,10 +150,11 @@ func (s *DoubaoAudioService) makeRequestJSON(text string) []byte {
 		},
 		"user": map[string]interface{}{"uid": "hawker_go_cli"},
 		"audio": map[string]interface{}{
-			"voice_type":   s.VoiceType,
+			"voice_type":   realVoiceID,
 			"encoding":     "mp3",
 			"speed_ratio":  1.0,
 			"volume_ratio": 1.0,
+			"pitch_ratio":  1.0,
 		},
 		"request": map[string]interface{}{
 			"reqid":     reqID,
