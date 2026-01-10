@@ -8,4 +8,5 @@ import (
 type AudioService interface {
 	// GenerateAudio 返回音频文件的本地路径或 URL
 	GenerateAudio(ctx context.Context, text string, identifier string, voiceType string) (string, error)
+	GetRealVoiceID(voiceType string) string
 }

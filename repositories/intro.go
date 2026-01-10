@@ -37,10 +37,10 @@ func (r *MemIntroRepository) GetPathByID(id string, voiceType string) string {
 func (r *MemIntroRepository) FindByTime(hour int, voiceType string) *models.IntroTemplate {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for _, t := range r.templates {
-		// 逻辑：匹配音色 且 小时在范围内
-		if t.VoiceType == voiceType && hour >= t.TimeRange[0] && hour < t.TimeRange[1] {
-			return &t
+	for i := range r.templates {
+		// 通过索引访问，或者在循环内定义局部变量 t := r.templates[i]
+		if r.templates[i].VoiceType == voiceType && hour >= r.templates[i].TimeRange[0] && hour < r.templates[i].TimeRange[1] {
+			return &r.templates[i]
 		}
 	}
 	return nil

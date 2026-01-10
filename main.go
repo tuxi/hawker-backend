@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"hawker-backend/config"
 	"hawker-backend/database"
@@ -12,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -55,7 +58,7 @@ func main() {
 	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
 	scheduler.Start(context.Background())
 
-	SetupAndPrewarmIntros(introRepository, audioService)
+	setupAndPrewarmIntros(introRepository, audioService)
 
 	// 3. 注册路由
 	r := gin.Default()
@@ -86,7 +89,7 @@ func main() {
 }
 
 // 初始化预设模版
-func SetupAndPrewarmIntros(repo *repositories.MemIntroRepository, audio services.AudioService) {
+func setupAndPrewarmIntros(repo *repositories.MemIntroRepository, audio services.AudioService) {
 	// 定义我们支持的音色
 	// sunny_boy: 阳光男声, soft_girl: 亲切女声
 	voices := []string{models.VoiceSunnyBoy, models.VoiceSoftGirl, models.VoicePromoBoss, models.VoiceSweetGirl}
@@ -107,15 +110,19 @@ func SetupAndPrewarmIntros(repo *repositories.MemIntroRepository, audio services
 	log.Println("🛠️ 正在检查并预热开场白音频资源...")
 
 	for _, voice := range voices {
+		// 建议在这里通过 audio service 先获取真实的火山 VoiceID
+		// 这样如果 mapping 里的 ID 变了，hash 也会变
+		realVoiceID := audio.GetRealVoiceID(voice)
 		for _, scene := range scenes {
-			// 构造存储标识符，注意带上 intros/ 前缀
-			identifier := fmt.Sprintf("intros/%s_%s", scene.tag, voice)
+			// 生成指纹：基于文案和真实音色 ID
+			fingerprint := generateContentHash(scene.text, realVoiceID)
+			// 构造新的存储标识：intros/morning_sunny_boy_a1b2c3d4
+			identifier := fmt.Sprintf("intros/%s_%s_%s", scene.tag, voice, fingerprint)
 
-			// 尝试预合成（GenerateAudio 内部会处理目录创建和重复跳过）
-			// 我们在外部先检查一下，如果文件已存在，就不调 API 浪费钱
 			fullPath := filepath.Join("./static/audio", identifier+".mp3")
 			audioURL := "/static/audio/" + identifier + ".mp3"
 
+			// 只有当这个特定“内容+音色”的文件不存在时，才去合成
 			if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 				log.Printf("🎙️ 合成新模版: [%s] 音色: %s", scene.text, voice)
 				_, err := audio.GenerateAudio(context.Background(), scene.text, identifier, voice)
@@ -123,11 +130,14 @@ func SetupAndPrewarmIntros(repo *repositories.MemIntroRepository, audio services
 					log.Printf("❌ 预热合成失败: %v", err)
 					continue
 				}
+
+				// 【可选】这里可以清理旧版本的同场景同音色文件（如果有的话）
+				cleanupOldIntros(scene.tag, voice, identifier)
 			}
 
 			// 注入内存仓库
 			repo.AddTemplate(models.IntroTemplate{
-				ID:        scene.id,
+				ID:        scene.id, // 这样 ID 就是 "morning_01", "default_01"
 				Text:      scene.text,
 				VoiceType: voice,
 				SceneTag:  scene.tag,
@@ -137,4 +147,23 @@ func SetupAndPrewarmIntros(repo *repositories.MemIntroRepository, audio services
 		}
 	}
 	log.Println("✅ 开场白资源预热完成")
+}
+
+// 辅助函数：生成内容哈希
+func generateContentHash(text string, voiceID string) string {
+	// 建议：如果你能拿到真实的火山 VoiceID（如 bv001），用它更准确
+	data := fmt.Sprintf("%s|%s", text, voiceID)
+	hash := sha1.Sum([]byte(data))
+	return hex.EncodeToString(hash[:8]) // 取前8位即可
+}
+
+func cleanupOldIntros(tag, voice, currentIdentifier string) {
+	pattern := filepath.Join("static/audio/intros", fmt.Sprintf("%s_%s_*.mp3", tag, voice))
+	files, _ := filepath.Glob(pattern)
+	for _, f := range files {
+		if !strings.Contains(f, currentIdentifier) {
+			os.Remove(f)
+			log.Printf("🧹 清理旧缓存文件: %s", f)
+		}
+	}
 }

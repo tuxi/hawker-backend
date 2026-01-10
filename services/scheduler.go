@@ -280,7 +280,6 @@ func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.Ha
 	// 获取当前应该使用的开场白
 	// 注意：这里传入的 AddTaskReq 参数可以从 task 中提取
 	introURL := s.getIntroAudio(task)
-
 	payload := models.WSMessage{
 		Type: "HAWKING_PLAY_EVENT",
 		Data: map[string]interface{}{
@@ -305,17 +304,22 @@ func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileN
 
 // 辅助方法：匹配逻辑
 func (s *HawkingScheduler) getIntroAudio(task *models.HawkingTask) string {
-	// 1. 如果任务指定了 IntroID
-	if task.IntroID != "" && task.IntroID != "none" {
-		return s.introRepo.GetPathByID(task.IntroID, task.VoiceType)
-	}
+	// 逻辑核心：必须传入 task.VoiceType
+	// 确保开场白与商品语音的人声完全统一
 
-	// 2. 自动匹配时间段
+	// 1. 获取当前小时
 	hour := time.Now().Hour()
+
+	// 2. 从仓库查找：匹配 (时间段 + 任务指定的音色)
 	template := s.introRepo.FindByTime(hour, task.VoiceType)
+
 	if template != nil {
+		fmt.Printf("从模版中匹配到了开场白音频：%s", template.AudioURL)
 		return template.AudioURL
 	}
 
-	return ""
+	// 3. 如果该音色没有对应时段的开场白，回退到默认
+	path := s.introRepo.GetPathByID("default_01", task.VoiceType)
+	fmt.Printf("模版中没有对应时段的开场白，使用默认开场白音频：%s", path)
+	return path
 }

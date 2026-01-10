@@ -106,40 +106,7 @@ func (s *DoubaoAudioService) gzipCompress(input []byte) []byte {
 }
 
 func (s *DoubaoAudioService) makeRequestJSON(text string, voiceType string) []byte {
-	// 映射业务标识到火山引擎真实 ID
-	realVoiceID := "zh_male_M392_conversation_wvae_bigtts" // 默认阳光青年
-
-	//switch voiceType {
-	//case VoiceSunnyBoy:
-	//	realVoiceID = "bv001_streaming" // 灿烂阳光青年
-	//case VoiceSoftGirl:
-	//	realVoiceID = "bv051_streaming" // 亲切邻居大姐
-	//case VoicePromoBoss:
-	//	realVoiceID = "bv700_streaming" // 热血卖货大叔
-	//case VoiceSweetGirl:
-	//	realVoiceID = "bv002_streaming" // 甜美温柔少女
-	//}
-
-	switch voiceType {
-	case models.VoiceSunnyBoy:
-		realVoiceID = "zh_male_M392_conversation_wvae_bigtts" // 灿烂阳光青年
-	case models.VoiceSoftGirl:
-		realVoiceID = "zh_female_vv_uranus_bigtts" // 亲切邻居大姐
-	case models.VoicePromoBoss:
-		realVoiceID = "saturn_zh_male_shuanglangshaonian_tob" // 热血卖货大叔
-	case models.VoiceSweetGirl:
-		realVoiceID = "zh_female_xiaohe_uranus_bigtts" // 甜美温柔少女
-	}
-
-	// 如果你已经开通了，就用下面这一组：
-	/*
-	   mapping := map[string]string{
-	       "sunny_boy":  "bv001_streaming",
-	       "soft_girl":  "bv051_streaming",
-	       "promo_boss": "bv700_streaming",
-	       "sweet_girl": "bv002_streaming",
-	   }
-	*/
+	realVoiceID := s.GetRealVoiceID(voiceType)
 
 	reqID := uuid.New().String()
 	req := map[string]interface{}{
@@ -224,4 +191,33 @@ func (s *DoubaoAudioService) gzipDecompress(input []byte) ([]byte, error) {
 	defer r.Close()
 	out, err := io.ReadAll(r)
 	return out, err
+}
+
+func (s *DoubaoAudioService) GetRealVoiceID(voiceType string) string {
+	// 映射业务标识到火山引擎真实 ID
+	realVoiceID := "zh_male_M392_conversation_wvae_bigtts" // 默认阳光青年
+
+	//switch voiceType {
+	//case VoiceSunnyBoy:
+	//	realVoiceID = "bv001_streaming" // 灿烂阳光青年
+	//case VoiceSoftGirl:
+	//	realVoiceID = "bv051_streaming" // 亲切邻居大姐
+	//case VoicePromoBoss:
+	//	realVoiceID = "bv700_streaming" // 热血卖货大叔
+	//case VoiceSweetGirl:
+	//	realVoiceID = "bv002_streaming" // 甜美温柔少女
+	//}
+
+	switch voiceType {
+	case models.VoiceSunnyBoy:
+		realVoiceID = "zh_male_M392_conversation_wvae_bigtts" // 灿烂阳光青年
+	case models.VoiceSoftGirl:
+		realVoiceID = "zh_female_vv_uranus_bigtts" // 亲切邻居大姐
+	case models.VoicePromoBoss:
+		realVoiceID = "zh_male_yuanboxiaoshu_moon_bigtts" // 热血卖货大叔
+	case models.VoiceSweetGirl:
+		realVoiceID = "zh_female_xiaohe_uranus_bigtts" // 甜美温柔少女
+	}
+
+	return realVoiceID
 }
