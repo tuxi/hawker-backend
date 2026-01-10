@@ -107,6 +107,9 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 					s.RemoveTask(id)
 					continue
 				}
+				// 获取当前应该使用的开场白
+				// 注意：这里传入的 AddTaskReq 参数可以从 task 中提取
+				introURL := s.getIntroAudio(task)
 
 				// 【改进点 1】：合成完后，不 Remove，只标记为已合成
 				s.taskMutex.Lock()
@@ -114,6 +117,7 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 					t.IsSynthesized = true
 					t.AudioURL = audioURL
 					t.Text = script
+					t.IntroURL = introURL
 					s.ActiveTasks[id] = t
 				}
 				currentTask := s.ActiveTasks[id] // 获取最新指针
@@ -277,15 +281,13 @@ func (s *HawkingScheduler) broadcastConfig() {
 
 // 场景 B：单次播放指令
 func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.HawkingTask) {
-	// 获取当前应该使用的开场白
-	// 注意：这里传入的 AddTaskReq 参数可以从 task 中提取
-	introURL := s.getIntroAudio(task)
+
 	payload := models.WSMessage{
 		Type: "HAWKING_PLAY_EVENT",
 		Data: map[string]interface{}{
 			"product_id": p.ID.String(),
 			"audio_url":  task.AudioURL,
-			"intro_url":  introURL, // 👈 新增：发给 App 的开场白路径
+			"intro_url":  task.IntroURL, // 👈 新增：发给 App 的开场白路径
 			"text":       task.Text,
 			"voice_type": task.VoiceType,
 		},
