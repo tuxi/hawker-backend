@@ -1,17 +1,19 @@
 # --- Builder Stage ---
 # 使用 1.25-alpine 会自动匹配到当前的 1.25.4 或更高补丁版本
 FROM golang:1.25-alpine AS builder
-ENV GO111MODULE=on \
-    CGO_ENABLED=0 \
-    GOPROXY=https://goproxy.io,direct
+#ENV GO111MODULE=on \
+#    CGO_ENABLED=0 \
+#    GOPROXY=https://goproxy.io,direct
 
 RUN apk add --no-cache git make
 WORKDIR /code
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# 直接编译，不再运行 swag init
+# 只编译linux
 RUN make linux
+# 跑 Makefile 里的 windows linux mac 三个任务
+#RUN make build
 
 # --- Final Stage ---
 FROM alpine:latest
