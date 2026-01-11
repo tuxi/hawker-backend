@@ -7,7 +7,7 @@ import (
 
 // 仓库接口
 type IntroRepository interface {
-	GetPathByID(id string, voiceType string) string
+	FindByID(id string, voiceType string) *models.IntroTemplate
 	FindByTime(hour int, voiceType string) *models.IntroTemplate
 }
 type MemIntroRepository struct {
@@ -22,15 +22,15 @@ func NewMemIntroRepository() *MemIntroRepository {
 }
 
 // GetPathByID 根据 ID 和音色查找
-func (r *MemIntroRepository) GetPathByID(id string, voiceType string) string {
+func (r *MemIntroRepository) FindByID(id string, voiceType string) *models.IntroTemplate {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, t := range r.templates {
 		if t.ID == id && t.VoiceType == voiceType {
-			return t.AudioURL
+			return &t
 		}
 	}
-	return ""
+	return nil
 }
 
 // FindByTime 根据当前小时和音色查找匹配的开场白

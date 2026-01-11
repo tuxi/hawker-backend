@@ -65,10 +65,10 @@ func (h *Hub) Broadcast(payload models.WSMessage) {
 	h.broadcast <- message
 }
 
-func (h *Hub) BroadcastTaskBundle(tasks []*models.HawkingTask) {
+func (h *Hub) BroadcastTaskBundle(data *models.TasksSnapshotData) {
 	bundle := models.TaskBundle{
 		Type: "TASK_CONF_UPDATE",
-		Data: tasks,
+		Data: data,
 	}
 	payload, _ := json.Marshal(bundle)
 	h.broadcast <- payload

@@ -16,6 +16,14 @@ import (
 	"time"
 )
 
+// 建议的消息结构
+type PlayEventData struct {
+	ProductID string               `json:"product_id"`
+	Intro     *models.HawkingIntro `json:"intro,omitempty"` // 独立开场白对象
+	Product   *models.HawkingTask  `json:"product"`         // 商品叫卖任务
+	VoiceType string               `json:"voice_type"`      // 全局同步音色
+}
+
 type HawkingScheduler struct {
 	productRepo  repositories.ProductRepository
 	introRepo    repositories.IntroRepository // 👈 新增：开场白仓库
@@ -23,8 +31,9 @@ type HawkingScheduler struct {
 	Hub          *Hub
 	IsRunning    int32 // 使用原子操作标记
 
-	ActiveTasks map[string]*models.HawkingTask
-	taskMutex   sync.RWMutex // 使用读写锁提高并发性能
+	ActiveTasks  map[string]*models.HawkingTask
+	taskMutex    sync.RWMutex // 使用读写锁提高并发性能
+	currentIntro *models.HawkingIntro
 
 	taskNotify chan struct{} //用于通知新任务到达
 }
@@ -90,7 +99,6 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 					continue
 				}
 
-				// 🌟 重点排查：FindByID 是否有数据库连接泄露导致阻塞？
 				product, err := s.productRepo.FindByID(id)
 				if err != nil {
 					s.RemoveTask(id) // 找不到商品才真正移除
@@ -100,39 +108,33 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 				// 执行合成
 				log.Printf("🎙️ 合成新任务: %s", product.Name)
 
-				// 🌟 重点排查：executeHawking 内部是否有 30 秒的超时？
 				// 如果这个函数不返回，下面的信号监听永远不生效
 				audioURL, script, err := s.executeHawking(ctx, product, task)
 				if err != nil {
 					s.RemoveTask(id)
 					continue
 				}
-				// 获取当前应该使用的开场白
-				// 注意：这里传入的 AddTaskReq 参数可以从 task 中提取
-				introURL := s.getIntroAudio(task)
 
-				// 【改进点 1】：合成完后，不 Remove，只标记为已合成
+				// 合成完后，不 Remove，只标记为已合成
 				s.taskMutex.Lock()
 				if t, ok := s.ActiveTasks[id]; ok {
 					t.IsSynthesized = true
 					t.AudioURL = audioURL
 					t.Text = script
-					t.IntroURL = introURL
 					s.ActiveTasks[id] = t
 				}
 				currentTask := s.ActiveTasks[id] // 获取最新指针
+				intro := s.getOrRefreshIntro(currentTask)
+
 				s.taskMutex.Unlock()
 
-				// 【改进点 2】：广播最新的全量列表给 App（包含已处理和未处理的）
-				// 这样 App 的“叫卖中”列表就不会因为合成完而消失
 				s.Hub.BroadcastTaskBundle(s.GetActiveTasksSnapshot())
 
-				//  推送并更新状态
 				log.Printf("📡 正在通过 WebSocket 广播指令...")
-				s.broadcastPlayEvent(product, currentTask) // 仅发送当前正在处理的这一个
-				log.Printf("🎉 广播已发出，等待 App 播放")   // 👈 新增：确认发送成功
+				s.broadcastPlayEvent(product, currentTask, intro) // 仅发送当前正在处理的这一个
+				log.Printf("🎉 广播已发出，等待 App 播放")
 
-				// 休息，且能随时响应退出
+				// 休息10秒，随时响应退出
 				sleepTime := 10
 				if product.IntervalSec > 0 {
 					sleepTime = product.IntervalSec
@@ -152,6 +154,23 @@ func (s *HawkingScheduler) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func (s *HawkingScheduler) getOrRefreshIntro(task *models.HawkingTask) *models.HawkingIntro {
+	now := time.Now().Hour()
+
+	// 逻辑：如果 intro 为空，或者当前小时超出了当前 intro 的适用范围，则刷新
+	// 假设 HawkingIntro 结构体里带了 StartHour 和 EndHour
+	if s.currentIntro == nil ||
+		now < s.currentIntro.StartHour ||
+		now >= s.currentIntro.EndHour ||
+		s.currentIntro.VoiceType != task.VoiceType { // 💡 别忘了音色也要匹配
+
+		log.Printf("🔄 正在刷新开场白 (当前小时: %d)", now)
+		s.currentIntro = s.getIntroTask(task)
+	}
+
+	return s.currentIntro
 }
 
 // executeHawking 封装具体的执行步骤，保持 Start 方法简洁
@@ -237,7 +256,6 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		MinQty:        req.MinQty,
 		ConditionUnit: req.ConditionUnit,
 		VoiceType:     req.VoiceType,
-		IntroID:       req.IntroID,
 		Scene:         scene,
 		IsSynthesized: false, // 每次添加或更新，都重置为 false 以触发重新合成
 	}
@@ -259,7 +277,7 @@ func (s *HawkingScheduler) RemoveTask(productID string) {
 }
 
 // 获取当前所有任务的快照（用于推送给 Swift）
-func (s *HawkingScheduler) GetActiveTasksSnapshot() []*models.HawkingTask {
+func (s *HawkingScheduler) GetActiveTasksSnapshot() *models.TasksSnapshotData {
 	s.taskMutex.RLock()
 	defer s.taskMutex.RUnlock()
 
@@ -267,7 +285,10 @@ func (s *HawkingScheduler) GetActiveTasksSnapshot() []*models.HawkingTask {
 	for _, task := range s.ActiveTasks {
 		list = append(list, task)
 	}
-	return list
+	return &models.TasksSnapshotData{
+		Intro:    s.currentIntro,
+		Products: list,
+	}
 }
 
 // 场景 A：全量同步 (配置更新)
@@ -280,17 +301,17 @@ func (s *HawkingScheduler) broadcastConfig() {
 }
 
 // 场景 B：单次播放指令
-func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.HawkingTask) {
+func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.HawkingTask, intro *models.HawkingIntro) {
 
+	data := PlayEventData{
+		ProductID: p.ID.String(),
+		Intro:     intro,
+		Product:   task,
+		VoiceType: task.VoiceType,
+	}
 	payload := models.WSMessage{
 		Type: "HAWKING_PLAY_EVENT",
-		Data: map[string]interface{}{
-			"product_id": p.ID.String(),
-			"audio_url":  task.AudioURL,
-			"intro_url":  task.IntroURL, // 👈 新增：发给 App 的开场白路径
-			"text":       task.Text,
-			"voice_type": task.VoiceType,
-		},
+		Data: data,
 	}
 	s.Hub.Broadcast(payload)
 }
@@ -305,7 +326,7 @@ func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileN
 }
 
 // 辅助方法：匹配逻辑
-func (s *HawkingScheduler) getIntroAudio(task *models.HawkingTask) string {
+func (s *HawkingScheduler) getIntroTask(task *models.HawkingTask) *models.HawkingIntro {
 	// 逻辑核心：必须传入 task.VoiceType
 	// 确保开场白与商品语音的人声完全统一
 
@@ -314,14 +335,22 @@ func (s *HawkingScheduler) getIntroAudio(task *models.HawkingTask) string {
 
 	// 2. 从仓库查找：匹配 (时间段 + 任务指定的音色)
 	template := s.introRepo.FindByTime(hour, task.VoiceType)
-
-	if template != nil {
+	if template == nil {
+		// 3. 如果该音色没有对应时段的开场白，回退到默认
+		template = s.introRepo.FindByID("default_01", task.VoiceType)
+		fmt.Printf("模版中没有对应时段的开场白，使用默认开场白音频：%s", template.AudioURL)
+	} else {
 		fmt.Printf("从模版中匹配到了开场白音频：%s", template.AudioURL)
-		return template.AudioURL
 	}
 
-	// 3. 如果该音色没有对应时段的开场白，回退到默认
-	path := s.introRepo.GetPathByID("default_01", task.VoiceType)
-	fmt.Printf("模版中没有对应时段的开场白，使用默认开场白音频：%s", path)
-	return path
+	return &models.HawkingIntro{
+		AudioURL:  template.AudioURL,
+		Text:      template.Text,
+		Scene:     template.SceneTag,
+		IntroID:   template.ID,
+		StartHour: template.TimeRange[0],
+		EndHour:   template.TimeRange[1],
+		VoiceType: template.VoiceType,
+	}
+
 }

@@ -3,15 +3,12 @@ package models
 type HawkingTask struct {
 	ProductID     string  `json:"product_id"`
 	AudioURL      string  `json:"audio_url"`
-	IntroURL      string  `json:"intro_url"`
 	Text          string  `json:"text"` // 如果用户传了全文，优先用这个
 	Scene         string  `json:"scene"`
 	Price         float64 `json:"price"`          // 👈 新增：临时现价
 	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价
 	Unit          string  // 存储本次叫卖的特定单位
-
-	VoiceType string `json:"voice_type"`
-	IntroID   string `json:"intro_id"`
+	VoiceType     string  `json:"voice_type"`
 
 	// --- 新增条件促销字段 ---
 	MinQty        float64 `json:"min_qty"`        // 触发优惠的门槛数量，如 2
@@ -21,10 +18,21 @@ type HawkingTask struct {
 	IsSynthesized bool
 }
 
+type HawkingIntro struct {
+	AudioURL string `json:"audio_url"`
+	Text     string `json:"text"`
+	Scene    string `json:"scene"`
+	// 可以增加 ID 方便客户端缓存
+	IntroID   string `json:"intro_id"`
+	StartHour int    `json:"start_hour"`
+	EndHour   int    `json:"end_hour"`
+	VoiceType string `json:"voice_type"`
+}
+
 // 定义推送给 Swift 的包装结构
 type TaskBundle struct {
-	Type string         `json:"type"` // 例如 "TASK_CONF_UPDATE"
-	Data []*HawkingTask `json:"data"`
+	Type string             `json:"type"` // 例如 "TASK_CONF_UPDATE"
+	Data *TasksSnapshotData `json:"data"`
 }
 
 type AddTaskReq struct {
@@ -65,3 +73,8 @@ const (
 	VoicePromoBoss = "promo_boss" // 卖货老板：适合海鲜、大促，嗓门大，有张力
 	VoiceSweetGirl = "sweet_girl" // 甜美客服：适合零食、甜品，声音细腻
 )
+
+type TasksSnapshotData struct {
+	Intro    *HawkingIntro  `json:"intro,omitempty"` // 独立开场白对象
+	Products []*HawkingTask `json:"products"`
+}
