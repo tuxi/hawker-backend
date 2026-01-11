@@ -2,7 +2,12 @@ cd hawker-backend
 go mod tidy
 
 1. 创建数据库 
-如果你在命令行（psql）或图形化界面，请先执行：
+如果你在命令行（psql）或图形化界面，请先执行： 
+进入数据库
+```
+psql -U postgres -h localhost -W
+```
+
 ```postgresql
 -- 如果数据库已存在，这句会报错，属于正常现象
 CREATE DATABASE hawker_db;
@@ -34,4 +39,9 @@ linux
 sudo apt update
 sudo apt install python3-pip
 pip3 install edge-tts
+```
+
+docker 运行项目
+```
+docker run -p 12188:12188 -v /data/hawker/conf:/app/hawker-backend/conf hawker-app
 ```

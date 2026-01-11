@@ -1,0 +1,27 @@
+services:
+  hawker-app:
+    # 🌟 关键：告诉 compose 从当前目录构建镜像
+    build: .
+    image: hawker-backend:latest
+    container_name: hawker-backend
+    ports:
+      - "12188:12188"
+    volumes:
+      - ./conf:/app/hawker-backend/conf
+      - ./logs:/app/hawker-backend/logs
+      - ./static:/app/hawker-backend/static
+    restart: always
+    networks:
+      - hawker-net
+    environment:
+      # 如果是同机部署，尽量换成内网 IP
+      DB_HOST: ""
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: "" # 建议用引号包裹，防止特殊字符解析错误
+      DB_NAME: hawker_db
+      TEST: ""
+
+networks:
+  hawker-net:
+    driver: bridge

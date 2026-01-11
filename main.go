@@ -27,8 +27,21 @@ func main() {
 		panic(err)
 	}
 
+	dbUser := os.Getenv("DB_USER")
+	dbPass := os.Getenv("DB_PASSWORD")
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbName := os.Getenv("DB_NAME")
+	if dbUser == "" || dbPass == "" || dbHost == "" {
+		dbUser = cfg.Database.User
+		dbPass = cfg.Database.Password
+		dbHost = cfg.Database.Host
+		dbPort = cfg.Database.Port
+		dbName = cfg.Database.Dbname
+	}
+
 	// 初始化数据库
-	db, err := database.InitDB(cfg.Database)
+	db, err := database.InitDB(dbHost, dbPort, dbUser, dbPass, dbName)
 	if err != nil {
 		panic(err)
 	}
@@ -85,7 +98,7 @@ func main() {
 			handlers.ServeWs(hub, c)
 		})
 	}
-	_ = r.Run(":8080")
+	_ = r.Run(fmt.Sprintf(":%d", cfg.Server.Port))
 }
 
 // 初始化预设模版
