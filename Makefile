@@ -38,14 +38,10 @@ linux: prepare
 		[ -z "$$BIN_NAME" ] && continue; \
 		for GOARCH in $(GOARCHS); do \
 			mkdir -p dist/linux_$$GOARCH; \
-			GOOS=linux GOARCH=$$GOARCH  CGO_ENABLED=1 \
-			go  build -ldflags \
-			"-linkmode external -extldflags -static \
-			-X ${version_package}.CommitId=${commit_id} \
-			-X ${version_package}.BranchName=${branch_name} \
-			-X ${version_package}.BuildTime=${build_time} \
-			-X ${version_package}.AppVersion=${app_version}"  \
-			 -o dist/linux_$$GOARCH/$$BIN_NAME cmd/main.go; \
+			GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=0 \
+			go build -ldflags \
+			"-s -w -X ${version_package}.CommitId=${commit_id} -X ${version_package}.BranchName=${branch_name} -X ${version_package}.BuildTime=${build_time} -X ${version_package}.AppVersion=${app_version}" \
+			-o dist/linux_$$GOARCH/$$BIN_NAME cmd/main.go; \
 		done \
 	done
 
