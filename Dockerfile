@@ -1,5 +1,6 @@
 # --- Builder Stage ---
-FROM golang:1.25.0-alpine AS builder
+# 使用 1.25-alpine 会自动匹配到当前的 1.25.4 或更高补丁版本
+FROM golang:1.25-alpine AS builder
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
     GOPROXY=https://goproxy.io,direct
