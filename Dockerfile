@@ -26,4 +26,5 @@ COPY --from=builder /code/dist/linux_amd64/hawker-backend .
 EXPOSE 12188
 VOLUME ["/app/hawker-backend/conf", "/app/hawker-backend/logs", "/app/hawker-backend/static"]
 
+
 ENTRYPOINT ["./hawker-backend"]

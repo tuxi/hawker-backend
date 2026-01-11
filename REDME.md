@@ -4,7 +4,10 @@ go mod tidy
 ubuntu 安装最新版pgsql
 ```
 sudo apt update
+# 安装最新版pgsql
 sudo apt install postgresql postgresql-contrib
+# 检查运行状态
+sudo systemctl status postgresql
 ```
 
 1. 创建数据库 
@@ -59,4 +62,8 @@ docker-compose up -d --build
 查看实时日志
 ```
 docker-compose logs -f hawker-app
+```
+停止并移除
+```
+docker compose down
 ```
