@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
-	"hawker-backend/config"
+	"hawker-backend/conf"
 	"testing"
 )
 

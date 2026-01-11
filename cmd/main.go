@@ -5,7 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"hawker-backend/config"
+	"hawker-backend/conf"
 	"hawker-backend/database"
 	"hawker-backend/handlers"
 	"hawker-backend/models"
@@ -22,7 +22,7 @@ import (
 func main() {
 
 	// 加载配置
-	cfg, err := config.LoadConfig("./config/config.yaml")
+	cfg, err := conf.LoadConfig("conf/config.yaml")
 	if err != nil {
 		panic(err)
 	}

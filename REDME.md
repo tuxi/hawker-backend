@@ -1,6 +1,12 @@
 cd hawker-backend
 go mod tidy
 
+ubuntu 安装最新版pgsql
+```
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+```
+
 1. 创建数据库 
 如果你在命令行（psql）或图形化界面，请先执行： 
 进入数据库
@@ -49,4 +55,8 @@ docker run -p 12188:12188 -v /data/hawker/conf:/app/hawker-backend/conf hawker-a
 docker compose首次启动/代码更新后启动
 ```
 docker-compose up -d --build
+```
+查看实时日志
+```
+docker-compose logs -f hawker-app
 ```
