@@ -45,3 +45,8 @@ docker 运行项目
 ```
 docker run -p 12188:12188 -v /data/hawker/conf:/app/hawker-backend/conf hawker-app
 ```
+
+docker compose首次启动/代码更新后启动
+```
+docker-compose up -d --build
+```
