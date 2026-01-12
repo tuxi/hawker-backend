@@ -1,0 +1,47 @@
+## docker-compose.yaml
+> 这个文件会将你的 App、MySQL 和 Redis 组合在一起，并自动处理网络连接
+```
+services:
+  # Nginx 服务
+  nginx:
+    image: nginx:alpine
+    container_name: hawker-nginx
+    ports:
+      - "80:80"   # 映射 HTTP 端口
+      # - "443:443" # 如果有 SSL，开启此端口
+    volumes:
+      - ./nginx/hawker.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./static:/app/static:ro # 🌟 关键：让 Nginx 也能读取音频文件目录
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - hawker-app
+    networks:
+      - hawker-net
+  #后端服务
+  hawker-app:
+    # 🌟 关键：告诉 compose 从当前目录构建镜像
+    build: .
+    image: hawker-backend:latest
+    container_name: hawker-backend
+    # ports:
+    #   - "12188:12188" # 屏蔽外部直接访问，只通过 Nginx 访问
+    volumes:
+      - ./conf:/app/hawker-backend/conf
+      - ./logs:/app/hawker-backend/logs
+      - ./static:/app/hawker-backend/static
+    restart: always
+    networks:
+      - hawker-net
+    environment:
+      # 如果是同机部署，尽量换成内网 IP
+      DB_HOST: ""
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: "" # 建议用引号包裹，防止特殊字符解析错误
+      DB_NAME: hawker_db
+      TEST: ""
+
+networks:
+  hawker-net:
+    driver: bridge
+```
