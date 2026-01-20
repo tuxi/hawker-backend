@@ -36,6 +36,7 @@ type TaskBundle struct {
 }
 
 type AddTaskReq struct {
+	SessionID     string  `json:"session_id" binding:"required"` // 👈 必须
 	ProductID     string  `json:"product_id" binding:"required"`
 	Text          string  `json:"text"`           // 用户完全自定义的文案
 	Price         float64 `json:"price"`          // 现价
@@ -48,6 +49,11 @@ type AddTaskReq struct {
 
 	VoiceType string `json:"voice_type"` // 👈 用户选定的音色，如 "sunny_boy"
 	IntroID   string `json:"intro_id"`   // 👈 用户指定的开场白 ID，"none" 表示不要
+}
+
+type SyncIntroReq struct {
+	Text      string `json:"text"`
+	VoiceType string `json:"voice_type"`
 }
 
 // 定义一个统一的消息外壳
@@ -75,6 +81,8 @@ const (
 )
 
 type TasksSnapshotData struct {
-	Intro    *HawkingIntro  `json:"intro,omitempty"` // 独立开场白对象
+	// 候选开场白池：客户端根据当前正在播的任务音色从这里面选
+	IntroPool []HawkingIntro `json:"intro_pool"`
+	// 所有的任务
 	Products []*HawkingTask `json:"products"`
 }

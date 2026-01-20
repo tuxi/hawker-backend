@@ -1,17 +1,13 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"hawker-backend/models"
 	"hawker-backend/repositories"
 	"hawker-backend/services"
-	"log"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type ProductHandler struct {
@@ -51,67 +47,6 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, products)
 }
 
-// UpdateHawkingConfig 更新叫卖配置 (重构后的核心逻辑)
-//func (h *ProductHandler) UpdateHawkingConfig(c *gin.Context) {
-//	id := c.Param("id")
-//	var input struct {
-//		Mode        models.HawkingMode `json:"mode"`
-//		CustomPrice float64            `json:"custom_price"`
-//		Weight      int                `json:"weight"`
-//		IntervalSec int                `json:"interval_sec"`
-//		IsUrgent    bool               `json:"is_urgent"`
-//	}
-//
-//	if err := c.ShouldBindJSON(&input); err != nil {
-//		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
-//		return
-//	}
-//
-//	// 1. 获取现有商品
-//	product, err := h.Repo.FindByID(id)
-//	if err != nil {
-//		c.JSON(http.StatusNotFound, gin.H{"error": "商品不存在"})
-//		return
-//	}
-//
-//	// 2. 组装更新字段，避免 Save 全字段覆盖
-//	updates := make(map[string]interface{})
-//	updates["hawking_mode"] = input.Mode
-//	updates["is_hawking"] = (input.Mode != models.ModeStop)
-//
-//	if input.CustomPrice > 0 {
-//		updates["custom_price"] = input.CustomPrice
-//		product.CustomPrice = input.CustomPrice // 用于后面生成脚本预览
-//	}
-//	if input.Weight > 0 {
-//		updates["weight"] = input.Weight
-//	}
-//	if input.IntervalSec > 0 {
-//		updates["interval_sec"] = input.IntervalSec
-//	}
-//
-//	if input.IsUrgent {
-//		updates["priority"] = 99
-//		past := time.Now().Add(-24 * time.Hour)
-//		updates["last_hawked_at"] = &past
-//	} else {
-//		updates["priority"] = 0
-//	}
-//
-//	// 3. 执行更新
-//	if err := h.Repo.UpdateHawkingFields(id, updates); err != nil {
-//		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
-//		return
-//	}
-//
-//	// 4. 生成预览（这里依然引用 logic 包，符合 Domain 逻辑）
-//	product.HawkingMode = input.Mode // 同步内存对象用于预览
-//	c.JSON(http.StatusOK, gin.H{
-//		"message":        "叫卖配置已更新",
-//		"script_preview": logic.GenerateSmartScript(*product),
-//	})
-//}
-
 func (h *ProductHandler) SyncProductsHandler(c *gin.Context) {
 
 	var items []models.ProductDTO
@@ -129,60 +64,19 @@ func (h *ProductHandler) SyncProductsHandler(c *gin.Context) {
 	}
 }
 
-// StartHawkingHandler 触发商品进入叫卖队列
-func (h *ProductHandler) StartHawkingHandler(c *gin.Context) {
-	// 1. 定义请求结构
-	var req struct {
-		ProductID uuid.UUID `json:"product_id"`
-		Mode      int       `json:"mode"`         // 0-停止, 1-常规, 2-充足, 3-低库存, 4-促销
-		Price     float64   `json:"custom_price"` // 叫卖时的临时价格
-		Priority  int       `json:"priority"`     // 优先级：建议传 100 以上实现插播
-	}
-
-	// 2. 解析参数
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
-		return
-	}
-
-	// 3. 构造更新数据
-	updates := map[string]interface{}{
-		"is_hawking":     true,
-		"hawking_mode":   models.HawkingMode(req.Mode),
-		"custom_price":   req.Price,
-		"priority":       req.Priority,
-		"hawking_status": "idle", // 强制重置状态，允许调度器立即抓取
-	}
-
-	// 4. 调用 Repo 执行更新
-	err := h.Repo.UpdateHawkingStatus(req.ProductID.String(), updates)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新叫卖状态失败"})
-		return
-	}
-
-	// 检查调度器是否在运行 (需要你把 scheduler 实例传给 handler)
-	if atomic.LoadInt32(&h.Scheduler.IsRunning) == 0 {
-		log.Println("⚡ 监测到新任务且引擎未运行，正在自动唤醒...")
-		// 注意：这里需要一个新的 context，不能用已经失效的旧 context
-		go h.Scheduler.Start(context.Background())
-	}
-
-	// 5. 返回结果
-	c.JSON(http.StatusOK, gin.H{
-		"message":    "叫卖指令已下达",
-		"product_id": req.ProductID,
-		"status":     "queued",
-	})
-}
-
 // 获取所有叫卖任务
 func (h *ProductHandler) GetHawkingTasksHandler(c *gin.Context) {
-	currentTasks := h.Scheduler.GetActiveTasksSnapshot()
+	sessionID := c.Query("session_id")
+	if sessionID == "" {
+		c.JSON(400, gin.H{"error": "必须提供 session_id 以定位叫卖任务"})
+		return
+	}
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot(sessionID)
 
 	c.JSON(200, gin.H{
-		"message": "添加成功",
-		"tasks":   currentTasks, // Swift 端拿到这个直接更新数组
+		"status":  "resumed",
+		"message": "已恢复叫卖会话",
+		"tasks":   currentTasks,
 	})
 }
 
@@ -190,7 +84,13 @@ func (h *ProductHandler) GetHawkingTasksHandler(c *gin.Context) {
 func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 	var req models.AddTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "参数错误"})
+		c.JSON(400, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	// 校验必填的 SessionID
+	if req.SessionID == "" {
+		c.JSON(400, gin.H{"error": "缺少 session_id"})
 		return
 	}
 
@@ -200,34 +100,50 @@ func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 		return
 	}
 
-	// 更新内存
+	// 1. 调用 Scheduler 的 AddTask (内部会自动处理 Session 的懒加载启动)
 	h.Scheduler.AddTask(product, req)
 
-	// --- 关键点：直接返回全量列表 ---
-	currentTasks := h.Scheduler.GetActiveTasksSnapshot()
-	//
-	//// (可选) 仍然保留广播，为了通知其他可能在线的设备
-	//h.Scheduler.Hub.BroadcastTaskBundle(currentTasks)
+	// 2. 获取该 Session 的专属快照 (包含该音色的 IntroPool)
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot(req.SessionID)
 
+	// 3. 返回结果给 Swift 端
 	c.JSON(200, gin.H{
-		"message": "添加成功",
-		"tasks":   currentTasks, // Swift 端拿到这个直接更新数组
+		"message":    "添加成功",
+		"session_id": req.SessionID,
+		"tasks":      currentTasks,
 	})
 }
 
 // RemoveHawkingTaskHandler 移除叫卖任务
 func (h *ProductHandler) RemoveHawkingTaskHandler(c *gin.Context) {
 	productID := c.Param("id")
+	sessionID := c.Query("session_id") // 对应 Swift: .../tasks/123?session_id=ABC
 
-	h.Scheduler.RemoveTask(productID)
+	if sessionID == "" {
+		c.JSON(400, gin.H{"error": "必须提供 session_id 以定位叫卖任务"})
+		return
+	}
 
-	currentTasks := h.Scheduler.GetActiveTasksSnapshot()
+	// 1. 从 Session 中移除任务 (如果任务清空，Scheduler 会自动 StopSession)
+	h.Scheduler.RemoveTask(sessionID, productID)
 
-	// (可选) 仍然广播给其他设备
-	//h.Scheduler.Hub.BroadcastTaskBundle(currentTasks)
+	// 2. 获取快照
+	// 注意：如果 Session 刚被销毁，这个方法会返回一个空的 Task 列表
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot(sessionID)
 
 	c.JSON(200, gin.H{
-		"message": "移除成功",
-		"tasks":   currentTasks,
+		"message":    "移除成功",
+		"session_id": sessionID,
+		"tasks":      currentTasks,
 	})
+}
+
+// 同步开场白
+func (h *ProductHandler) SyncIntroHandler(c *gin.Context) {
+	var req models.SyncIntroReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+
 }

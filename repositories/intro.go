@@ -9,6 +9,8 @@ import (
 type IntroRepository interface {
 	FindByID(id string, voiceType string) *models.IntroTemplate
 	FindByTime(hour int, voiceType string) *models.IntroTemplate
+	FindAllByVoice(voiceType string) []*models.IntroTemplate
+	FindAllByTime(hour int, voiceType string) []*models.IntroTemplate
 }
 type MemIntroRepository struct {
 	templates []models.IntroTemplate
@@ -46,9 +48,36 @@ func (r *MemIntroRepository) FindByTime(hour int, voiceType string) *models.Intr
 	return nil
 }
 
+func (r *MemIntroRepository) FindAllByVoice(voiceType string) []*models.IntroTemplate {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	templates := make([]*models.IntroTemplate, 0)
+	for i := range r.templates {
+		if r.templates[i].VoiceType == voiceType {
+			// 直接存入指针
+			templates = append(templates, &r.templates[i])
+		}
+	}
+	return templates
+}
+
 // AddTemplate 手动或自动添加模版
 func (r *MemIntroRepository) AddTemplate(t models.IntroTemplate) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.templates = append(r.templates, t)
+}
+
+func (r *MemIntroRepository) FindAllByTime(hour int, voiceType string) []*models.IntroTemplate {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	templates := make([]*models.IntroTemplate, 0)
+
+	for i := range r.templates {
+		if r.templates[i].VoiceType == voiceType && hour >= r.templates[i].TimeRange[0] && hour < r.templates[i].TimeRange[1] {
+			templates = append(templates, &r.templates[i])
+		}
+	}
+	return templates
 }

@@ -69,7 +69,6 @@ func main() {
 	// 初始化 Handlers (注入 Repo)
 	productHandler := handlers.NewProductHandler(productRepo, scheduler)
 	categoryHandler := handlers.NewCategoryHandler(categoryRepo)
-	scheduler.Start(context.Background())
 
 	setupAndPrewarmIntros(introRepository, audioService)
 
@@ -83,11 +82,11 @@ func main() {
 		v1.GET("/products", productHandler.GetProducts)
 		//v1.PATCH("/products/:id/hawking", productHandler.UpdateHawkingConfig)
 		v1.POST("/products/sync", productHandler.SyncProductsHandler)
-		v1.POST("/hawking/start", productHandler.StartHawkingHandler)
 		// 叫卖任务管理
 		v1.POST("/hawking/tasks", productHandler.AddHawkingTaskHandler)          // 添加任务
 		v1.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
 		v1.GET("/hawking/tasks", productHandler.GetHawkingTasksHandler)
+		v1.POST("/hawking/intro", productHandler.SyncIntroHandler)
 
 		// Category 路由
 		v1.POST("/categories", categoryHandler.CreateCategory)
