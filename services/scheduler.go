@@ -95,72 +95,57 @@ func (s *HawkingScheduler) runSessionLoop(sess *HawkingSession) {
 		log.Printf("🛑 Session [%s] 已停止", sess.ID)
 	}()
 
-	log.Printf("🚀 Session [%s] 启动，音色: %s", sess.ID, sess.VoiceType)
-
 	for {
-		// --- A. 获取当前 Session 的任务快照 ---
+		// --- 1. 等待信号 ---
+		// 我们不再主动轮询，只有在 AddTask 或是手动唤醒时才继续
+		select {
+		case <-sess.ctx.Done():
+			return
+		case <-sess.taskNotify: // 只有收到 AddTask 信号才往下走
+			log.Printf("🔔 Session [%s] 被唤醒，开始检查新任务", sess.ID)
+		}
+
+		// --- 2. 处理任务 ---
 		sess.mu.RLock()
-		var tasksToProcess []*models.HawkingTask
+		// 提取还没合成的任务（按需处理）
+		var pendingTasks []*models.HawkingTask
 		for _, t := range sess.ActiveTasks {
-			tasksToProcess = append(tasksToProcess, t)
+			if !t.IsSynthesized { // 关键：只处理未合成的
+				pendingTasks = append(pendingTasks, t)
+			}
 		}
 		sess.mu.RUnlock()
 
-		// --- B. 没活干就等信号 ---
-		if len(tasksToProcess) == 0 {
-			select {
-			case <-sess.ctx.Done():
-				return
-			case <-sess.taskNotify:
-				continue
-			}
+		if len(pendingTasks) == 0 {
+			continue
 		}
 
-		// --- C. 遍历处理任务 ---
-		for _, task := range tasksToProcess {
-			// 再次检查 Session 是否被关闭
-			select {
-			case <-sess.ctx.Done():
-				return
-			default:
-			}
-
+		for _, task := range pendingTasks {
 			product, err := s.productRepo.FindByID(task.ProductID)
 			if err != nil {
 				continue
 			}
 
-			// 1. 执行合成 (复用你原来的 executeHawking)
-			// 注意：这里合成时使用的是 Session 统一的 VoiceType
+			// 执行合成
 			audioURL, script, err := s.executeHawking(sess.ctx, product, task)
 			if err != nil {
+				log.Printf("❌ 合成失败: %v", err)
 				continue
 			}
 
-			// 2. 更新任务状态
+			// 更新状态
 			sess.mu.Lock()
 			task.IsSynthesized = true
 			task.AudioURL = audioURL
 			task.Text = script
 			sess.mu.Unlock()
 
-			// 3. 匹配开场白 (客户端是指挥官，但服务端根据 Session 时段挑选并发送)
+			// 匹配开场白
 			intro := s.pickIntroForSession(sess)
 
-			// 4. 广播：带上 SessionID 区分
+			// 📢 仅在此时广播：合成好了，告诉客户端“加菜了”
+			log.Printf("📡 广播新资源: %s", product.Name)
 			s.broadcastPlayEventToSession(sess.ID, product, task, intro)
-
-			// 5. 等待间隔
-			sleepTime := 10
-			if product.IntervalSec > 0 {
-				sleepTime = product.IntervalSec
-			}
-
-			select {
-			case <-sess.ctx.Done():
-				return
-			case <-time.After(time.Duration(sleepTime) * time.Second):
-			}
 		}
 	}
 }
@@ -423,7 +408,7 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		ConditionUnit: req.ConditionUnit,
 		VoiceType:     req.VoiceType,
 		Scene:         scene,
-		IsSynthesized: false,
+		IsSynthesized: false, // 确保进入循环后被识别为 pendingTasks
 	}
 	sess.mu.Unlock()
 
@@ -431,9 +416,11 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 	// 触发信号唤醒 Start 中的 for 循环
 	select {
 	case sess.taskNotify <- struct{}{}:
-		log.Println("✅ 信号发送成功")
+		log.Println("✅ 唤醒信号发送成功")
 	default:
-		log.Println("⚠️ 信号队列已满，说明已有任务在排队")
+		// 如果信号没发进去，说明上一次唤醒的任务还在处理中，
+		// 处理完后它会自动重新检查 mu.ActiveTasks，所以不用担心丢失。
+		log.Println("ℹ️ 调度器忙碌中，新任务已排队")
 	}
 }
 
