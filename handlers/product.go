@@ -108,7 +108,7 @@ func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 
 	// 3. 返回结果给 Swift 端
 	c.JSON(200, gin.H{
-		"message":    "添加成功",
+		"message":    "任务已同步",
 		"session_id": req.SessionID,
 		"tasks":      currentTasks,
 	})
