@@ -312,7 +312,7 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 
 	// 1. 生成文案
 	script = task.Text
-	if len(task.Text) == 0 {
+	if len(script) == 0 {
 		script = logic.GenerateSmartScript(*p, task)
 		log.Printf("📝 为 [%s] 生成文案: %s", p.Name, script)
 	}
