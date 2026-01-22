@@ -34,11 +34,12 @@ type HawkingSession struct {
 
 // 建议的消息结构
 type PlayEventData struct {
-	SessionID string               `json:"session_id"`
-	ProductID string               `json:"product_id"`
-	Intro     *models.HawkingIntro `json:"intro,omitempty"` // 独立开场白对象
-	Product   *models.HawkingTask  `json:"product"`         // 商品叫卖任务
-	VoiceType string               `json:"voice_type"`      // 全局同步音色
+	SessionID string `json:"session_id"`
+	ProductID string `json:"product_id"`
+	// 🌟 只有在音色变更后的第一个任务，或者 Pool 发生变化时才携带，平时为 nil
+	IntroPool []*models.HawkingIntro `json:"intro_pool,omitempty"`
+	Product   *models.HawkingTask    `json:"product"`    // 商品叫卖任务
+	VoiceType string                 `json:"voice_type"` // 全局同步音色
 }
 
 type HawkingScheduler struct {
@@ -57,9 +58,7 @@ func NewHawkingScheduler(repo repositories.ProductRepository, introRepo reposito
 		introRepo:    introRepo,
 		audioService: audio,
 		Hub:          hub,
-		//ActiveTasks:  make(map[string]*models.HawkingTask),
-		//taskNotify:   make(chan struct{}, 1), // 缓冲大小设置为1即可
-		sessions: make(map[string]*HawkingSession, 2),
+		sessions:     make(map[string]*HawkingSession, 2),
 	}
 }
 
@@ -141,20 +140,22 @@ func (s *HawkingScheduler) runSessionLoop(sess *HawkingSession) {
 			sess.mu.Unlock()
 
 			// 匹配开场白
-			intro := s.pickIntroForSession(sess)
+			//intro := s.pickIntroForSession(sess)
+			// 🌟 获取该音色对应的完整开场白池
+			introPool := s.GetIntroPoolByVoice(sess.VoiceType)
 
+			log.Printf("📡 广播新资源: %s (带全量开场白池)", product.Name)
 			// 📢 仅在此时广播：合成好了，告诉客户端“加菜了”
-			log.Printf("📡 广播新资源: %s", product.Name)
-			s.broadcastPlayEventToSession(sess.ID, product, task, intro)
+			s.broadcastPlayEventToSession(sess.ID, product, task, introPool)
 		}
 	}
 }
 
-func (s *HawkingScheduler) broadcastPlayEventToSession(sessionID string, p *models.Product, task *models.HawkingTask, intro *models.HawkingIntro) {
+func (s *HawkingScheduler) broadcastPlayEventToSession(sessionID string, p *models.Product, task *models.HawkingTask, introPool []*models.HawkingIntro) {
 	data := PlayEventData{
 		SessionID: sessionID, // 👈 关键：标识所属会话
 		ProductID: p.ID.String(),
-		Intro:     intro,
+		IntroPool: introPool,
 		Product:   task,
 		VoiceType: task.VoiceType,
 	}
@@ -180,113 +181,6 @@ func (s *HawkingScheduler) pickIntroForSession(sess *HawkingSession) *models.Haw
 	}
 }
 
-//func (s *HawkingScheduler) Start(ctx context.Context) {
-//	if !atomic.CompareAndSwapInt32(&s.IsRunning, 0, 1) {
-//		return
-//	}
-//
-//	go func() {
-//		// 1. 增加异常恢复，防止协程挂掉
-//		defer func() {
-//			if r := recover(); r != nil {
-//				log.Printf("❌ 叫卖引擎崩溃重燃: %v", r)
-//				atomic.StoreInt32(&s.IsRunning, 0)
-//				s.Start(ctx) // 尝试重启
-//			}
-//		}()
-//
-//		log.Printf("🚀 叫卖引擎启动 [地址:%p]", s)
-//
-//		for {
-//			// --- A. 获取任务列表 ---
-//			s.taskMutex.RLock()
-//			// 找出所有活跃，且【尚未合成】的任务
-//			var pendingIDs []string
-//			for id, task := range s.ActiveTasks {
-//				if !task.IsSynthesized {
-//					pendingIDs = append(pendingIDs, id)
-//				}
-//			}
-//			s.taskMutex.RUnlock()
-//
-//			// --- B. 没活干就死等信号 ---
-//			if len(pendingIDs) == 0 {
-//				select {
-//				case <-ctx.Done():
-//					log.Println("🔔 收到ctx.Done 信号")
-//					return
-//				case <-s.taskNotify:
-//					log.Println("🔔 收到唤醒信号")
-//					continue // 重新回到顶部拿任务
-//				}
-//			}
-//
-//			// --- C. 有活干，逐个处理 ---
-//			for _, id := range pendingIDs {
-//				s.taskMutex.RLock()
-//				task, ok := s.ActiveTasks[id]
-//				s.taskMutex.RUnlock()
-//				if !ok {
-//					continue
-//				}
-//
-//				product, err := s.productRepo.FindByID(id)
-//				if err != nil {
-//					s.RemoveTask(id) // 找不到商品才真正移除
-//					continue
-//				}
-//
-//				// 执行合成
-//				log.Printf("🎙️ 合成新任务: %s", product.Name)
-//
-//				// 如果这个函数不返回，下面的信号监听永远不生效
-//				audioURL, script, err := s.executeHawking(ctx, product, task)
-//				if err != nil {
-//					s.RemoveTask(id)
-//					continue
-//				}
-//
-//				// 合成完后，不 Remove，只标记为已合成
-//				s.taskMutex.Lock()
-//				if t, ok := s.ActiveTasks[id]; ok {
-//					t.IsSynthesized = true
-//					t.AudioURL = audioURL
-//					t.Text = script
-//					s.ActiveTasks[id] = t
-//				}
-//				currentTask := s.ActiveTasks[id] // 获取最新指针
-//				intro := s.getOrRefreshIntro(currentTask)
-//
-//				s.taskMutex.Unlock()
-//
-//				s.Hub.BroadcastTaskBundle(s.GetActiveTasksSnapshot())
-//
-//				log.Printf("📡 正在通过 WebSocket 广播指令...")
-//				s.broadcastPlayEvent(product, currentTask, intro) // 仅发送当前正在处理的这一个
-//				log.Printf("🎉 广播已发出，等待 App 播放")
-//
-//				// 休息10秒，随时响应退出
-//				sleepTime := 10
-//				if product.IntervalSec > 0 {
-//					sleepTime = product.IntervalSec
-//				}
-//
-//				select {
-//				case <-ctx.Done():
-//					return
-//				case <-time.After(time.Duration(sleepTime) * time.Second):
-//				}
-//			}
-//
-//			// 处理完一波，清空多余信号
-//			select {
-//			case <-s.taskNotify:
-//			default:
-//			}
-//		}
-//	}()
-//}
-
 func (s *HawkingScheduler) getOrRefreshIntro(sess *HawkingSession, task *models.HawkingTask) *models.HawkingIntro {
 	now := time.Now().Hour()
 
@@ -311,7 +205,7 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	}
 
 	// 1. 生成文案
-	script = task.Text
+	script = task.CustomText
 	if len(script) == 0 {
 		script = logic.GenerateSmartScript(*p, task)
 		log.Printf("📝 为 [%s] 生成文案: %s", p.Name, script)
@@ -400,6 +294,7 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 	key := strings.ToLower(product.ID.String())
 	sess.ActiveTasks[key] = &models.HawkingTask{
 		ProductID:     req.ProductID,
+		CustomText:    req.Text,
 		Text:          req.Text,
 		Price:         req.Price,
 		OriginalPrice: req.OriginalPrice,
@@ -485,11 +380,11 @@ func (s *HawkingScheduler) GetActiveTasksSnapshot(sessionID string) *models.Task
 }
 
 // 场景 B：单次播放指令
-func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.HawkingTask, intro *models.HawkingIntro) {
+func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.HawkingTask, introPool []*models.HawkingIntro) {
 
 	data := PlayEventData{
 		ProductID: p.ID.String(),
-		Intro:     intro,
+		IntroPool: introPool,
 		Product:   task,
 		VoiceType: task.VoiceType,
 	}
@@ -537,4 +432,54 @@ func (s *HawkingScheduler) getIntroTask(task *models.HawkingTask) *models.Hawkin
 		VoiceType: template.VoiceType,
 	}
 
+}
+
+func (s *HawkingScheduler) getOrCreateSession(sessionID string) *HawkingSession {
+	s.sessionMu.RLock()
+	defer s.sessionMu.RUnlock()
+	sess, exists := s.sessions[sessionID]
+	if !exists {
+		sess = &HawkingSession{}
+	}
+	return sess
+}
+
+func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID string) {
+	sess := s.getOrCreateSession(sessionID)
+
+	sess.mu.Lock()
+	sess.VoiceType = newVoiceID // 更新 Session 当前音色
+
+	// 🌟 关键：将所有已合成的任务全部重置为“待合成”
+	for _, task := range sess.ActiveTasks {
+		task.IsSynthesized = false
+		task.VoiceType = newVoiceID
+		task.AudioURL = ""
+		// 这里的 Text 可以保留，因为只是换声音读，文案通常不用变
+	}
+	sess.mu.Unlock()
+
+	// 唤醒 runSessionLoop 开始全量合成
+	select {
+	case sess.taskNotify <- struct{}{}:
+	default:
+	}
+}
+
+func (s *HawkingScheduler) GetIntroPoolByVoice(voiceType string) []*models.HawkingIntro {
+	// 仅针对该 Session 所使用的音色下发开场白池
+	templates := s.introRepo.FindAllByVoice(voiceType)
+	var introPool = make([]*models.HawkingIntro, 0)
+	for _, t := range templates {
+		introPool = append(introPool, &models.HawkingIntro{
+			AudioURL:  t.AudioURL,
+			Text:      t.Text,
+			Scene:     t.SceneTag,
+			IntroID:   t.ID,
+			StartHour: t.TimeRange[0],
+			EndHour:   t.TimeRange[1],
+			VoiceType: t.VoiceType,
+		})
+	}
+	return introPool
 }

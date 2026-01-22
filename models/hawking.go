@@ -1,10 +1,10 @@
 package models
 
 type HawkingTask struct {
-	ProductID string `json:"product_id"`
-	AudioURL  string `json:"audio_url"`
-	Text      string `json:"text"` // 如果用户传了全文，优先用这个
-	//CustomText    string  `json:"custom_text"` // 如果用户传了全文，优先用这个
+	ProductID     string  `json:"product_id"`
+	AudioURL      string  `json:"audio_url"`
+	Text          string  `json:"text"`        // 如果用户传了全文，优先用这个
+	CustomText    string  `json:"custom_text"` // 如果用户传了全文，优先用这个
 	Scene         string  `json:"scene"`
 	Price         float64 `json:"price"`          // 👈 新增：临时现价
 	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价

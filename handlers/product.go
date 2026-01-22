@@ -147,3 +147,27 @@ func (h *ProductHandler) SyncIntroHandler(c *gin.Context) {
 	}
 
 }
+
+// 切换音色
+func (h *ProductHandler) SwitchVoiceHandler(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		VoiceID   string `json:"voice_id"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+	// 1. 获取新音色的静态配置（仅包含 ID 和 Text，不一定包含最终 URL）
+	newIntroPool := h.Scheduler.GetIntroPoolByVoice(req.VoiceID)
+
+	// 2. 触发后端重置与重新合成任务
+	h.Scheduler.ChangeSessionVoice(req.SessionID, req.VoiceID)
+
+	// 3. 在接口响应中立即下发，让客户端知道“文案已经变了”
+	c.JSON(200, gin.H{
+		"status":     "processing",
+		"intro_pool": newIntroPool, // 🌟 立即同步下发
+	})
+}

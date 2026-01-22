@@ -87,6 +87,7 @@ func main() {
 		v1.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
 		v1.GET("/hawking/tasks", productHandler.GetHawkingTasksHandler)
 		v1.POST("/hawking/intro", productHandler.SyncIntroHandler)
+		v1.POST("hawking/switch-voice", productHandler.SwitchVoiceHandler) // 切换音色
 		//v1.GET("/hawking/intros", productHandler.SyncIntroHandler) // 根据音色和时间点获取到开场白池
 
 		// Category 路由
