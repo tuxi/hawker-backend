@@ -151,8 +151,9 @@ func (h *ProductHandler) SyncIntroHandler(c *gin.Context) {
 // 切换音色
 func (h *ProductHandler) SwitchVoiceHandler(c *gin.Context) {
 	var req struct {
-		SessionID string `json:"session_id"`
-		VoiceID   string `json:"voice_id"`
+		SessionID  string   `json:"session_id"`
+		VoiceID    string   `json:"voice_id"`
+		ProductIDs []string `json:"product_ids"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -163,7 +164,7 @@ func (h *ProductHandler) SwitchVoiceHandler(c *gin.Context) {
 	newIntroPool := h.Scheduler.GetIntroPoolByVoice(req.VoiceID)
 
 	// 2. 触发后端重置与重新合成任务
-	h.Scheduler.ChangeSessionVoice(req.SessionID, req.VoiceID)
+	h.Scheduler.ChangeSessionVoice(req.SessionID, req.VoiceID, req.ProductIDs)
 
 	// 3. 在接口响应中立即下发，让客户端知道“文案已经变了”
 	c.JSON(200, gin.H{

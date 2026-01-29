@@ -26,10 +26,15 @@ type HawkingSession struct {
 	mu           sync.RWMutex
 
 	// 控制该 Session 的开关
-	ctx        context.Context
-	cancel     context.CancelFunc
+	SessionCtx    context.Context // Session 的总开关（只有关闭 Session 时才取消）
+	SessionCancel context.CancelFunc
+
+	BatchCancel context.CancelFunc // 🌟 专门用于取消“当前这一波”合成任务
+
 	taskNotify chan struct{}
 	IsRunning  int32
+
+	VoiceVersion int // 音色版本
 }
 
 // 建议的消息结构
@@ -74,13 +79,13 @@ func (s *HawkingScheduler) StartSession(sessionID string, voiceType string) {
 	// 2. 初始化新 Session
 	ctx, cancel := context.WithCancel(context.Background())
 	sess := &HawkingSession{
-		ID:          sessionID,
-		VoiceType:   voiceType,
-		ActiveTasks: make(map[string]*models.HawkingTask),
-		taskNotify:  make(chan struct{}, 1),
-		ctx:         ctx,
-		cancel:      cancel,
-		IsRunning:   1,
+		ID:            sessionID,
+		VoiceType:     voiceType,
+		ActiveTasks:   make(map[string]*models.HawkingTask),
+		taskNotify:    make(chan struct{}, 1),
+		SessionCtx:    ctx,
+		SessionCancel: cancel,
+		IsRunning:     1,
 	}
 	s.sessions[sessionID] = sess
 
@@ -98,7 +103,7 @@ func (s *HawkingScheduler) runSessionLoop(sess *HawkingSession) {
 		// --- 1. 等待信号 ---
 		// 我们不再主动轮询，只有在 AddTask 或是手动唤醒时才继续
 		select {
-		case <-sess.ctx.Done():
+		case <-sess.SessionCtx.Done():
 			return
 		case <-sess.taskNotify: // 只有收到 AddTask 信号才往下走
 			log.Printf("🔔 Session [%s] 被唤醒，开始检查新任务", sess.ID)
@@ -120,13 +125,17 @@ func (s *HawkingScheduler) runSessionLoop(sess *HawkingSession) {
 		}
 
 		for _, task := range pendingTasks {
+			// 增加一层校验：如果任务要求的音色和 Session 当前音色不符，说明是旧信号，跳过
+			if task.VoiceType != sess.VoiceType {
+				continue
+			}
 			product, err := s.productRepo.FindByID(task.ProductID)
 			if err != nil {
 				continue
 			}
 
 			// 执行合成
-			audioURL, script, err := s.executeHawking(sess.ctx, product, task)
+			audioURL, script, err := s.executeHawking(sess.SessionCtx, product, task)
 			if err != nil {
 				log.Printf("❌ 合成失败: %v", err)
 				continue
@@ -204,6 +213,11 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 		return
 	}
 
+	// 🌟 检查点 1：进入时检查
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+
 	// 1. 生成文案
 	script = task.CustomText
 	if len(script) == 0 {
@@ -225,12 +239,20 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 		audioURL = fmt.Sprintf("/static/audio/%s.mp3", newFileName)
 		log.Printf("♻️ 文案未变，复用缓存音频: %s", p.Name)
 	} else {
+		// 🌟 检查点 2：调用外部 SDK 前检查
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+
 		// 4. 文案变了或文件丢失，调用火山引擎合成
 		log.Printf("🎙️ 文案已更新，正在调用火山引擎合成音频: %s", p.Name)
 		audioURL, err = s.audioService.GenerateAudio(ctx, script, newFileName, task.VoiceType)
 		if err != nil {
 			log.Printf("❌ 语音合成失败 [%s]: %v", p.Name, err)
-			s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
+			// 这里如果是 context canceled，不应该将状态设为 idle
+			if ctx.Err() == nil {
+				s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
+			}
 			return
 		}
 
@@ -239,6 +261,12 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 		// 5. 【可选】清理旧版本的音频文件
 		// 为了防止磁盘被同一个商品的各种历史版本占满，可以异步删掉该商品旧 Hash 的文件
 		go s.cleanupOldVersions(p.ID.String(), newFileName)
+	}
+
+	// 🌟 检查点 3：写入数据库前检查
+	// 如果此时用户切换了音色，那么之前的合成结果虽然已经落盘，但不需要更新到这个 session 的 DB 任务状态中
+	if err := ctx.Err(); err != nil {
+		return "", "", err
 	}
 
 	// 更新哈希值准备存入数据库
@@ -268,12 +296,12 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		// 1. 懒加载：创建并启动新 Session
 		ctx, cancel := context.WithCancel(context.Background())
 		sess = &HawkingSession{
-			ID:          req.SessionID,
-			VoiceType:   req.VoiceType,
-			ActiveTasks: make(map[string]*models.HawkingTask),
-			taskNotify:  make(chan struct{}, 1),
-			ctx:         ctx,
-			cancel:      cancel,
+			ID:            req.SessionID,
+			VoiceType:     req.VoiceType,
+			ActiveTasks:   make(map[string]*models.HawkingTask),
+			taskNotify:    make(chan struct{}, 1),
+			SessionCtx:    ctx,
+			SessionCancel: cancel,
 		}
 		s.sessions[req.SessionID] = sess
 		go s.runSessionLoop(sess) // 启动该 Session 的独立循环
@@ -334,7 +362,7 @@ func (s *HawkingScheduler) RemoveTask(sessionID string, productID string) {
 
 	// ⚠️ 核心逻辑：如果任务空了，停止并移除 Session
 	if remaining == 0 {
-		sess.cancel() // 停止 runSessionLoop 协程
+		sess.SessionCancel() // 停止 runSessionLoop 协程
 		delete(s.sessions, sessionID)
 		log.Printf("🗑️ Session [%s] 无任务，已自动停止并销毁", sessionID)
 	}
@@ -443,26 +471,142 @@ func (s *HawkingScheduler) getOrCreateSession(sessionID string) *HawkingSession 
 	}
 	return sess
 }
-
-func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID string) {
+func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID string, targetProductIDs []string) {
 	sess := s.getOrCreateSession(sessionID)
-
 	sess.mu.Lock()
-	sess.VoiceType = newVoiceID // 更新 Session 当前音色
 
-	// 🌟 关键：将所有已合成的任务全部重置为“待合成”
-	for _, task := range sess.ActiveTasks {
-		task.IsSynthesized = false
-		task.VoiceType = newVoiceID
-		task.AudioURL = ""
-		// 这里的 Text 可以保留，因为只是换声音读，文案通常不用变
+	// 1. 取消旧批次
+	if sess.BatchCancel != nil {
+		sess.BatchCancel()
+	}
+
+	batchCtx, cancel := context.WithCancel(context.Background())
+	sess.BatchCancel = cancel
+	sess.VoiceVersion++
+	currentVersion := sess.VoiceVersion
+	sess.VoiceType = newVoiceID
+
+	// 2. 准备判断 Map
+	targetMap := make(map[string]bool)
+	for _, id := range targetProductIDs {
+		targetMap[strings.ToLower(id)] = true
+	}
+
+	hasPendingTask := false // 标记是否真的需要跑后台合成
+
+	// 3. 必须遍历所有任务，确保内存里的元数据 100% 准确
+	for id, task := range sess.ActiveTasks {
+		task.VoiceType = newVoiceID // 统一音色标识
+
+		// 计算新音色对应的文件名（必须与 executeHawking 保持高度一致）
+		shortHash := ""
+		if len(task.CustomText) > 0 {
+			shortHash = fmt.Sprintf("%x", md5.Sum([]byte(task.CustomText)))[:8]
+		} else {
+			// 如果没有 CustomText，这里也需要根据 logic.GenerateSmartScript 逻辑算一个 Hash
+			// 建议把文件名生成逻辑封装成一个通用函数
+			script := task.Text
+			shortHash = fmt.Sprintf("%x", md5.Sum([]byte(script)))[:8]
+		}
+		predictedName := fmt.Sprintf("%s_%s_%s", task.ProductID, newVoiceID, shortHash)
+
+		// 🌟 核心逻辑：判断是否命中缓存
+		if !targetMap[strings.ToLower(id)] {
+			// 命中服务端缓存：更新 URL 并标记已合成
+			task.IsSynthesized = true
+			task.AudioURL = fmt.Sprintf("/static/audio/%s.mp3", predictedName)
+			log.Printf("♻️ 命中服务端缓存: %s", predictedName)
+		} else if !s.checkAudioExists(predictedName) {
+			// 只要客户端说没有，或者服务端磁盘真没有，就标记为待合成
+			task.IsSynthesized = false
+			task.AudioURL = ""
+			hasPendingTask = true
+		}
 	}
 	sess.mu.Unlock()
 
-	// 唤醒 runSessionLoop 开始全量合成
-	select {
-	case sess.taskNotify <- struct{}{}:
-	default:
+	// 4. 只有存在真正需要合成的任务时，才启动协程
+	if hasPendingTask {
+		go s.runSynthesisBatch(sess, batchCtx, currentVersion)
+	} else {
+		log.Printf("✅ 所有任务均命中间缓存，无需发起 TTS 合成请求")
+	}
+}
+
+//func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID string) {
+//	sess := s.getOrCreateSession(sessionID)
+//
+//	sess.mu.Lock()
+//
+//	// 1. 立即触发取消旧任务
+//	if sess.BatchCancel != nil {
+//		sess.BatchCancel()
+//	}
+//
+//	// 2. 创建一个独立于 SessionCtx 的新 Context 给这一波合成任务
+//	// 注意：这里用 context.Background() 或者从顶层传，不要从已经取消的旧 ctx 派生
+//	batchCtx, cancel := context.WithCancel(context.Background())
+//	sess.BatchCancel = cancel
+//	sess.VoiceVersion++
+//	currentVersion := sess.VoiceVersion
+//	sess.VoiceType = newVoiceID
+//
+//	// 🌟 关键：将所有已合成的任务全部重置为“待合成”
+//	for _, task := range sess.ActiveTasks {
+//		task.IsSynthesized = false
+//		task.VoiceType = newVoiceID
+//		task.AudioURL = ""
+//		// 这里的 Text 可以保留，因为只是换声音读，文案通常不用变
+//	}
+//	sess.mu.Unlock()
+//
+//	// 3. 启动异步批量合成
+//	go s.runSynthesisBatch(sess, batchCtx, currentVersion)
+//}
+
+// 重新合成音频
+func (s *HawkingScheduler) runSynthesisBatch(sess *HawkingSession, ctx context.Context, version int) {
+	// 批量抓取待处理任务
+	sess.mu.RLock()
+	var tasks []*models.HawkingTask
+	for _, t := range sess.ActiveTasks {
+		tasks = append(tasks, t) // 拿到当前所有任务
+	}
+	sess.mu.RUnlock()
+
+	for _, task := range tasks {
+		// 🌟 检查点 1: Context 是否被取消（音色是否又换了）
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		product, err := s.productRepo.FindByID(task.ProductID)
+		if err != nil {
+			continue
+		}
+
+		// 执行合成，传入带取消功能的 ctx
+		audioURL, script, err := s.executeHawking(ctx, product, task)
+		if err != nil {
+			continue
+		}
+
+		sess.mu.Lock()
+		// 🌟 检查点 2: 双重校验版本号
+		if sess.VoiceVersion != version {
+			sess.mu.Unlock()
+			return // 版本不一致，说明切换了，直接丢弃本次合成结果
+		}
+
+		task.IsSynthesized = true
+		task.AudioURL = audioURL
+		task.Text = script
+
+		introPool := s.GetIntroPoolByVoice(sess.VoiceType)
+		s.broadcastPlayEventToSession(sess.ID, product, task, introPool)
+		sess.mu.Unlock()
 	}
 }
 

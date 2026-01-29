@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hawker-backend/models"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,6 +65,23 @@ func (s *DoubaoAudioService) GenerateAudio(ctx context.Context, text string, ide
 	if err != nil {
 		return "", fmt.Errorf("dial failed: %v", err)
 	}
+
+	// --- 🌟 关键改进：Context 监听器 ---
+	// 启动一个协程，如果 Context 被取消（比如切换了音色），立即关闭连接
+	done := make(chan struct{})
+	defer close(done) // 函数退出时通知监听协程结束
+	go func() {
+		select {
+		case <-ctx.Done():
+			// 如果是因为 Context 取消（音色切换），强行关闭连接以中断阻塞的 ReadMessage
+			log.Printf("⚠️ Context 取消，正在中断音色 [%s] 的合成请求", voiceType)
+			conn.Close()
+		case <-done:
+			// 正常结束，直接退出协程
+			return
+		}
+	}()
+
 	defer conn.Close()
 
 	if err := conn.WriteMessage(websocket.BinaryMessage, clientRequest); err != nil {
@@ -83,6 +101,16 @@ func (s *DoubaoAudioService) GenerateAudio(ctx context.Context, text string, ide
 
 	if err != nil {
 		os.Remove(tempPath) // 出错则清理临时文件
+		// 🌟 识别是否是由于 Context 取消导致的错误
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("synthesis cancelled by context: %w", ctx.Err())
+		}
+		return "", err
+	}
+
+	// 4. 再次检查 Context，防止在合成成功的瞬间正好发生切换
+	if err := ctx.Err(); err != nil {
+		os.Remove(tempPath)
 		return "", err
 	}
 
