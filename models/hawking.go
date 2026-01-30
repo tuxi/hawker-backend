@@ -3,8 +3,8 @@ package models
 type HawkingTask struct {
 	ProductID     string  `json:"product_id"`
 	AudioURL      string  `json:"audio_url"`
-	Text          string  `json:"text"`        // 如果用户传了全文，优先用这个
-	CustomText    string  `json:"custom_text"` // 如果用户传了全文，优先用这个
+	Text          string  `json:"text"`        // 生成的、锁定的、用于合成的最终文本
+	CustomText    string  `json:"custom_text"` // 用户手动输入的原始文本
 	Scene         string  `json:"scene"`
 	Price         float64 `json:"price"`          // 👈 新增：临时现价
 	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价
@@ -83,7 +83,7 @@ const (
 
 type TasksSnapshotData struct {
 	// 候选开场白池：客户端根据当前正在播的任务音色从这里面选
-	IntroPool []HawkingIntro `json:"intro_pool"`
+	IntroPool []*HawkingIntro `json:"intro_pool"`
 	// 所有的任务
 	Products []*HawkingTask `json:"products"`
 }

@@ -219,49 +219,41 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	}
 
 	// 1. 生成文案
-	script = task.CustomText
-	if len(script) == 0 {
-		script = logic.GenerateSmartScript(*p, task)
-		log.Printf("📝 为 [%s] 生成文案: %s", p.Name, script)
-	}
-
-	// 2. 计算当前文案的哈希值
-	currentHash := fmt.Sprintf("%x", md5.Sum([]byte(script)))
-	// 取 Hash 的前 8 位作为后缀即可，既保证唯一性又让文件名不太长
-	shortHash := currentHash[:8]
-	// 新的文件名格式：ProductID_ShortHash.mp3
-	// 🌟 文件名哈希中也建议加入音色 ID，防止同文案不同音色覆盖
-	newFileName := fmt.Sprintf("%s_%s_%s", p.ID.String(), task.VoiceType, shortHash)
+	script = task.Text
+	// 生成文件名
+	newFileName, currentHash := s.generateFileName(task, task.VoiceType)
 
 	// 3. 缓存校验
 	// 如果文案没变，且对应的音频文件确实存在于磁盘上
+	// 3. 再次校验缓存（防止 runSynthesisBatch 过程中别的线程下好了）
 	if s.checkAudioExists(newFileName) {
 		audioURL = fmt.Sprintf("/static/audio/%s.mp3", newFileName)
 		log.Printf("♻️ 文案未变，复用缓存音频: %s", p.Name)
-	} else {
-		// 🌟 检查点 2：调用外部 SDK 前检查
-		if err := ctx.Err(); err != nil {
-			return "", "", err
-		}
-
-		// 4. 文案变了或文件丢失，调用火山引擎合成
-		log.Printf("🎙️ 文案已更新，正在调用火山引擎合成音频: %s", p.Name)
-		audioURL, err = s.audioService.GenerateAudio(ctx, script, newFileName, task.VoiceType)
-		if err != nil {
-			log.Printf("❌ 语音合成失败 [%s]: %v", p.Name, err)
-			// 这里如果是 context canceled，不应该将状态设为 idle
-			if ctx.Err() == nil {
-				s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
-			}
-			return
-		}
-
-		log.Printf("✅ 音频合成成功! 文件路径: %s", audioURL) // 👈 新增：确认合成完成
-
-		// 5. 【可选】清理旧版本的音频文件
-		// 为了防止磁盘被同一个商品的各种历史版本占满，可以异步删掉该商品旧 Hash 的文件
-		go s.cleanupOldVersions(p.ID.String(), task.VoiceType, newFileName)
+		return audioURL, script, nil
 	}
+
+	// 🌟 检查点 2：调用外部 SDK 前检查
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+
+	// 4. 文案变了或文件丢失，调用火山引擎合成
+	log.Printf("🎙️ 文案已更新，正在调用火山引擎合成音频: %s", p.Name)
+	audioURL, err = s.audioService.GenerateAudio(ctx, script, newFileName, task.VoiceType)
+	if err != nil {
+		log.Printf("❌ 语音合成失败 [%s]: %v", p.Name, err)
+		// 这里如果是 context canceled，不应该将状态设为 idle
+		if ctx.Err() == nil {
+			s.productRepo.UpdateHawkingStatus(p.ID.String(), map[string]interface{}{"hawking_status": "idle"})
+		}
+		return
+	}
+
+	log.Printf("✅ 音频合成成功! 文件路径: %s", audioURL) // 👈 新增：确认合成完成
+
+	// 5. 清理当前音色下的旧文案版本
+	// 为了防止磁盘被同一个商品的各种历史版本占满，可以异步删掉该商品旧 Hash 的文件
+	go s.cleanupOldVersions(p.ID.String(), task.VoiceType, newFileName)
 
 	// 🌟 检查点 3：写入数据库前检查
 	// 如果此时用户切换了音色，那么之前的合成结果虽然已经落盘，但不需要更新到这个 session 的 DB 任务状态中
@@ -281,15 +273,11 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	s.productRepo.UpdateHawkingStatus(p.ID.String(), updates)
 	return
 }
-func (s *HawkingScheduler) generateFileName(task *models.HawkingTask, voiceID string) string {
-	script := task.CustomText
-	if len(script) == 0 {
-		// 这里要小心！逻辑必须和 logic.GenerateSmartScript 后的 script 一致
-		// 最好是 task 对象里已经存了生成的 Text
-		script = task.Text
-	}
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(script)))[:8]
-	return fmt.Sprintf("%s_%s_%s", task.ProductID, voiceID, hash)
+func (s *HawkingScheduler) generateFileName(task *models.HawkingTask, voiceID string) (fileName string, hash string) {
+	// 统一使用 task.Text，它是 AddTask 时锁定的唯一真理
+	script := task.Text
+	hash = fmt.Sprintf("%x", md5.Sum([]byte(script)))[:8]
+	return fmt.Sprintf("%s_%s_%s", task.ProductID, voiceID, hash), hash
 }
 
 // 辅助方法：检查本地文件是否还在（防止被手动删了）
@@ -319,12 +307,23 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 	}
 	s.sessionMu.Unlock()
 
+	finalText := req.Text
+
 	// 2. 确定文案场景
-	scene := "default"
-	if req.Text != "" {
-		scene = "custom"
-	} else if req.Price > 0 {
-		scene = "price_promo"
+	scene := "custom"
+	if finalText == "" {
+		// 构造一个临时 Task 传给文案生成逻辑
+		tempTask := &models.HawkingTask{
+			Price:         req.Price,
+			OriginalPrice: req.OriginalPrice,
+			Unit:          req.Unit,
+			MinQty:        req.MinQty,
+			ConditionUnit: req.ConditionUnit,
+			VoiceType:     req.VoiceType,
+			ProductID:     req.ProductID,
+		}
+		finalText = logic.GenerateSmartScript(*product, tempTask)
+		scene = "smart_generated" // 标记是生成的
 	}
 
 	// 3. 在 Session 内部添加任务
@@ -333,7 +332,7 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 	sess.ActiveTasks[key] = &models.HawkingTask{
 		ProductID:     req.ProductID,
 		CustomText:    req.Text,
-		Text:          req.Text,
+		Text:          finalText, // 锁定文案，后续音色切换全部基于此 Text
 		Price:         req.Price,
 		OriginalPrice: req.OriginalPrice,
 		Unit:          req.Unit,
@@ -385,7 +384,7 @@ func (s *HawkingScheduler) GetActiveTasksSnapshot(sessionID string) *models.Task
 	s.sessionMu.RUnlock()
 
 	if !exists {
-		return &models.TasksSnapshotData{Products: []*models.HawkingTask{}, IntroPool: []models.HawkingIntro{}}
+		return &models.TasksSnapshotData{Products: []*models.HawkingTask{}, IntroPool: []*models.HawkingIntro{}}
 	}
 
 	sess.mu.RLock()
@@ -397,19 +396,7 @@ func (s *HawkingScheduler) GetActiveTasksSnapshot(sessionID string) *models.Task
 	}
 
 	// 仅针对该 Session 所使用的音色下发开场白池
-	templates := s.introRepo.FindAllByVoice(sess.VoiceType)
-	var introPool = make([]models.HawkingIntro, 0)
-	for _, t := range templates {
-		introPool = append(introPool, models.HawkingIntro{
-			AudioURL:  t.AudioURL,
-			Text:      t.Text,
-			Scene:     t.SceneTag,
-			IntroID:   t.ID,
-			StartHour: t.TimeRange[0],
-			EndHour:   t.TimeRange[1],
-			VoiceType: t.VoiceType,
-		})
-	}
+	introPool := s.GetIntroPoolByVoice(sess.VoiceType)
 
 	return &models.TasksSnapshotData{
 		Products:  products,
@@ -433,15 +420,6 @@ func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.Ha
 	s.Hub.Broadcast(payload)
 }
 
-//	func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileName string) {
-//		// 查找 static/audio/ 目录下所有以 productID 开头但不是 currentFullFileName 的文件并删除
-//		files, _ := filepath.Glob(filepath.Join("static/audio", productID+"_*.mp3"))
-//		for _, f := range files {
-//			if !strings.Contains(f, currentFullFileName) {
-//				os.Remove(f)
-//			}
-//		}
-//	}
 func (s *HawkingScheduler) cleanupOldVersions(productID string, voiceType string, currentFullFileName string) {
 	// 1. 更加精准的匹配模式：ProductID_VoiceType_*.mp3
 	// 这样只会找到【当前商品】在【当前音色】下的历史版本
@@ -524,11 +502,8 @@ func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID strin
 	for _, task := range sess.ActiveTasks {
 		task.VoiceType = newVoiceID // 统一音色标识
 
-		// 提取生成文件名的逻辑（建议封装，防止 hash 算法不一致）
-		predictedName := s.generateFileName(task, newVoiceID)
-
-		// 🌟 修正后的判定逻辑
-
+		// 基于已锁定的 task.Text 计算哈希，不再重新生成文案
+		predictedName, _ := s.generateFileName(task, newVoiceID)
 		// 第一步：先看服务端磁盘到底有没有
 		existsOnServer := s.checkAudioExists(predictedName)
 
@@ -536,14 +511,14 @@ func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID strin
 			// 只要服务端有，无论客户端传没传，都直接复用
 			task.IsSynthesized = true
 			task.AudioURL = fmt.Sprintf("/static/audio/%s.mp3", predictedName)
-			log.Printf("♻️ 命中服务端缓存: %s", predictedName)
+			log.Printf("♻️ 命中服务端缓存 [音色: %s]: %s", newVoiceID, predictedName)
 		} else {
 			// 如果服务端磁盘没有：
 			// 无论客户端本地有没有，都必须重新合成，否则必然 404
 			task.IsSynthesized = false
 			task.AudioURL = ""
 			hasPendingTask = true
-			log.Printf("⚡️ 服务端无缓存，准备合成: %s", predictedName)
+			log.Printf("⚡️ 无缓存，准备合成新音色 [%s]: %s", newVoiceID, predictedName)
 		}
 	}
 	sess.mu.Unlock()
