@@ -260,7 +260,7 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 
 		// 5. 【可选】清理旧版本的音频文件
 		// 为了防止磁盘被同一个商品的各种历史版本占满，可以异步删掉该商品旧 Hash 的文件
-		go s.cleanupOldVersions(p.ID.String(), newFileName)
+		go s.cleanupOldVersions(p.ID.String(), task.VoiceType, newFileName)
 	}
 
 	// 🌟 检查点 3：写入数据库前检查
@@ -280,6 +280,16 @@ func (s *HawkingScheduler) executeHawking(ctx context.Context, p *models.Product
 	}
 	s.productRepo.UpdateHawkingStatus(p.ID.String(), updates)
 	return
+}
+func (s *HawkingScheduler) generateFileName(task *models.HawkingTask, voiceID string) string {
+	script := task.CustomText
+	if len(script) == 0 {
+		// 这里要小心！逻辑必须和 logic.GenerateSmartScript 后的 script 一致
+		// 最好是 task 对象里已经存了生成的 Text
+		script = task.Text
+	}
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(script)))[:8]
+	return fmt.Sprintf("%s_%s_%s", task.ProductID, voiceID, hash)
 }
 
 // 辅助方法：检查本地文件是否还在（防止被手动删了）
@@ -422,11 +432,27 @@ func (s *HawkingScheduler) broadcastPlayEvent(p *models.Product, task *models.Ha
 	}
 	s.Hub.Broadcast(payload)
 }
-func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileName string) {
-	// 查找 static/audio/ 目录下所有以 productID 开头但不是 currentFullFileName 的文件并删除
-	files, _ := filepath.Glob(filepath.Join("static/audio", productID+"_*.mp3"))
+
+//	func (s *HawkingScheduler) cleanupOldVersions(productID string, currentFullFileName string) {
+//		// 查找 static/audio/ 目录下所有以 productID 开头但不是 currentFullFileName 的文件并删除
+//		files, _ := filepath.Glob(filepath.Join("static/audio", productID+"_*.mp3"))
+//		for _, f := range files {
+//			if !strings.Contains(f, currentFullFileName) {
+//				os.Remove(f)
+//			}
+//		}
+//	}
+func (s *HawkingScheduler) cleanupOldVersions(productID string, voiceType string, currentFullFileName string) {
+	// 1. 更加精准的匹配模式：ProductID_VoiceType_*.mp3
+	// 这样只会找到【当前商品】在【当前音色】下的历史版本
+	pattern := filepath.Join("static/audio", fmt.Sprintf("%s_%s_*.mp3", productID, voiceType))
+
+	files, _ := filepath.Glob(pattern)
 	for _, f := range files {
+		// 2. 只有文件名完全不匹配当前最新文件时才删除
+		// 这样可以保留该商品在 其它音色 下的缓存文件
 		if !strings.Contains(f, currentFullFileName) {
+			log.Printf("🧹 清理旧版本缓存: %s", f)
 			os.Remove(f)
 		}
 	}
@@ -495,32 +521,29 @@ func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID strin
 	hasPendingTask := false // 标记是否真的需要跑后台合成
 
 	// 3. 必须遍历所有任务，确保内存里的元数据 100% 准确
-	for id, task := range sess.ActiveTasks {
+	for _, task := range sess.ActiveTasks {
 		task.VoiceType = newVoiceID // 统一音色标识
 
-		// 计算新音色对应的文件名（必须与 executeHawking 保持高度一致）
-		shortHash := ""
-		if len(task.CustomText) > 0 {
-			shortHash = fmt.Sprintf("%x", md5.Sum([]byte(task.CustomText)))[:8]
-		} else {
-			// 如果没有 CustomText，这里也需要根据 logic.GenerateSmartScript 逻辑算一个 Hash
-			// 建议把文件名生成逻辑封装成一个通用函数
-			script := task.Text
-			shortHash = fmt.Sprintf("%x", md5.Sum([]byte(script)))[:8]
-		}
-		predictedName := fmt.Sprintf("%s_%s_%s", task.ProductID, newVoiceID, shortHash)
+		// 提取生成文件名的逻辑（建议封装，防止 hash 算法不一致）
+		predictedName := s.generateFileName(task, newVoiceID)
 
-		// 🌟 核心逻辑：判断是否命中缓存
-		if !targetMap[strings.ToLower(id)] {
-			// 命中服务端缓存：更新 URL 并标记已合成
+		// 🌟 修正后的判定逻辑
+
+		// 第一步：先看服务端磁盘到底有没有
+		existsOnServer := s.checkAudioExists(predictedName)
+
+		if existsOnServer {
+			// 只要服务端有，无论客户端传没传，都直接复用
 			task.IsSynthesized = true
 			task.AudioURL = fmt.Sprintf("/static/audio/%s.mp3", predictedName)
 			log.Printf("♻️ 命中服务端缓存: %s", predictedName)
-		} else if !s.checkAudioExists(predictedName) {
-			// 只要客户端说没有，或者服务端磁盘真没有，就标记为待合成
+		} else {
+			// 如果服务端磁盘没有：
+			// 无论客户端本地有没有，都必须重新合成，否则必然 404
 			task.IsSynthesized = false
 			task.AudioURL = ""
 			hasPendingTask = true
+			log.Printf("⚡️ 服务端无缓存，准备合成: %s", predictedName)
 		}
 	}
 	sess.mu.Unlock()
@@ -532,37 +555,6 @@ func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID strin
 		log.Printf("✅ 所有任务均命中间缓存，无需发起 TTS 合成请求")
 	}
 }
-
-//func (s *HawkingScheduler) ChangeSessionVoice(sessionID string, newVoiceID string) {
-//	sess := s.getOrCreateSession(sessionID)
-//
-//	sess.mu.Lock()
-//
-//	// 1. 立即触发取消旧任务
-//	if sess.BatchCancel != nil {
-//		sess.BatchCancel()
-//	}
-//
-//	// 2. 创建一个独立于 SessionCtx 的新 Context 给这一波合成任务
-//	// 注意：这里用 context.Background() 或者从顶层传，不要从已经取消的旧 ctx 派生
-//	batchCtx, cancel := context.WithCancel(context.Background())
-//	sess.BatchCancel = cancel
-//	sess.VoiceVersion++
-//	currentVersion := sess.VoiceVersion
-//	sess.VoiceType = newVoiceID
-//
-//	// 🌟 关键：将所有已合成的任务全部重置为“待合成”
-//	for _, task := range sess.ActiveTasks {
-//		task.IsSynthesized = false
-//		task.VoiceType = newVoiceID
-//		task.AudioURL = ""
-//		// 这里的 Text 可以保留，因为只是换声音读，文案通常不用变
-//	}
-//	sess.mu.Unlock()
-//
-//	// 3. 启动异步批量合成
-//	go s.runSynthesisBatch(sess, batchCtx, currentVersion)
-//}
 
 // 重新合成音频
 func (s *HawkingScheduler) runSynthesisBatch(sess *HawkingSession, ctx context.Context, version int) {
