@@ -51,8 +51,10 @@ type Product struct {
 }
 
 type ProductDTO struct {
-	ID           uuid.UUID `json:"id"`
-	Name         string    `json:"name"`
-	Unit         string    `json:"unit"`
-	CategoryName string    `json:"category_name"`
+	ID             uuid.UUID `json:"id"`
+	Name           string    `json:"name"`
+	Unit           string    `json:"unit"`
+	Price          float64   `json:"price"`
+	CategoryName   string    `json:"category_name"`
+	MarketingLabel string    `json:"marketing_label"`
 }

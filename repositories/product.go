@@ -125,17 +125,18 @@ func (r *productRepository) SyncProducts(items []models.ProductDTO) error {
 
 			// 2. 构造模型
 			p := models.Product{
-				Base:       models.Base{ID: item.ID},
-				Name:       item.Name,
-				Unit:       item.Unit,
-				CategoryID: category.ID,
+				Base:           models.Base{ID: item.ID},
+				Name:           item.Name,
+				Unit:           item.Unit,
+				CategoryID:     category.ID,
+				MarketingLabel: item.MarketingLabel,
 			}
 
 			// 3. 执行 Upsert (存在则更新，不存在则插入)
 			// 注意：AssignmentColumns 仅列出需要从 App 同步过来的字段
 			err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "id"}},
-				DoUpdates: clause.AssignmentColumns([]string{"name", "unit", "category_id"}),
+				DoUpdates: clause.AssignmentColumns([]string{"name", "unit", "category_id", "marketing_label"}),
 			}).Create(&p).Error
 
 			if err != nil {
