@@ -6,8 +6,8 @@ type HawkingTask struct {
 	Text          string  `json:"text"`        // 生成的、锁定的、用于合成的最终文本
 	CustomText    string  `json:"custom_text"` // 用户手动输入的原始文本
 	Scene         string  `json:"scene"`
-	Price         float64 `json:"price"`          // 👈 新增：临时现价
-	OriginalPrice float64 `json:"original_price"` // 👈 新增：临时原价
+	Price         float64 `json:"price"`          // 临时现价
+	OriginalPrice float64 `json:"original_price"` // 临时原价
 	Unit          string  `json:"unit"`           // 存储本次叫卖的特定单位
 	VoiceType     string  `json:"voice_type"`
 

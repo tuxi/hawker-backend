@@ -36,31 +36,49 @@ var (
 	}
 )
 
-// 叫卖文案生成核心入口
+// GenerateScript 叫卖文案生成核心入口
 func GenerateScript(p models.Product, task *models.HawkingTask) string {
 	// 每次生成重新播种，确保真随机
 	rand.Seed(time.Now().UnixNano())
 
-	// 1. 口语化价格
+	// 1. 口语化价格转换
 	oralPrice := formatPriceToOral(task.Price, task.Unit)
+	oralOriginalPrice := ""
+	// 🌟 只有当原价确实存在且大于现价时，才生成原价口语
+	if task.OriginalPrice > task.Price {
+		oralOriginalPrice = formatPriceToOral(task.OriginalPrice, task.Unit)
+	}
 
-	// 2. 确定时间
+	// 2. 确定时间语境
 	timeContext := "今天"
 	if time.Now().Hour() >= 17 {
 		timeContext = "晚上"
 	}
 
-	// 3. 策略选择：如果开启复读机模式，执行接地气逻辑
+	// 3. 策略选择：如果开启复读机模式
 	if task.UseRepeatMode {
 		label := p.MarketingLabel
 		if label == "" {
 			label = "新鲜的"
 		}
+
 		promo := task.PromotionTag
 		if promo == "" {
 			promo = "活动价"
 		}
 
+		// --- 🌟 优化后的复读机模板 ---
+		// 情况 A: 有原价时，加入对比逻辑
+		if oralOriginalPrice != "" {
+			return fmt.Sprintf("%s %s，%s%s，平时都要卖 %s，%s%s 只要 %s！",
+				p.Name, oralPrice, // 第一遍报盘
+				label, p.Name, // 第二遍开始：定语+品名
+				oralOriginalPrice,             // 抛出原价做对比
+				timeContext, promo, oralPrice, // 给出现在的促销理由和价格
+			)
+		}
+
+		// 情况 B: 无原价时，保持原来的简洁有力
 		return fmt.Sprintf("%s %s，%s%s，%s%s 只要 %s！",
 			p.Name, oralPrice,
 			label, p.Name,
@@ -68,8 +86,8 @@ func GenerateScript(p models.Product, task *models.HawkingTask) string {
 		)
 	}
 
-	// 4. 兜底逻辑： 智能描述模式 如果关闭了复读机模式，可以走你原有的智能匹配 traits 的逻辑
-	return generateSmartScriptExtended(p, task, oralPrice)
+	// 4. 智能描述模式逻辑
+	return generateSmartScriptExtended(p, task, oralPrice, oralOriginalPrice)
 }
 
 // formatPriceToOral 将数字价格和单位转化为富有烟火气的口语
@@ -121,21 +139,23 @@ func formatPriceToOral(price float64, unit string) string {
 	// 11块9毛9一斤
 	return fmt.Sprintf("%s一%s", priceStr, unit)
 }
-func generateSmartScriptExtended(p models.Product, req *models.HawkingTask, oralPrice string) string {
-	// 开场
+
+// 扩展后的智能脚本生成逻辑
+func generateSmartScriptExtended(p models.Product, req *models.HawkingTask, oralPrice string, oralOriginalPrice string) string {
+	// 随机选开场
 	script := openings[rand.Intn(len(openings))]
 
-	// 属性匹配
+	// 识别商品属性卖点
 	matched := false
 	for key, list := range traits {
-		if strings.Contains(p.Name, key) || strings.Contains(p.Category.Name, key) {
+		if strings.Contains(p.Name, key) || (p.Category.Name != "" && strings.Contains(p.Category.Name, key)) {
 			script += list[rand.Intn(len(list))]
 			matched = true
 			break
 		}
 	}
 	if !matched {
-		script += "精选好货，品质放心，"
+		script += "优质生鲜，品质看得见，"
 	}
 
 	script += fmt.Sprintf("咱家的%s，", p.Name)
@@ -148,18 +168,22 @@ func generateSmartScriptExtended(p models.Product, req *models.HawkingTask, oral
 		}
 	}
 
-	// 价格组合
-	if req.OriginalPrice > req.Price && req.Price > 0 {
-		script += fmt.Sprintf("平时都要卖 %s，%s 只要 %s！",
-			formatPriceToOral(req.OriginalPrice, req.Unit),
-			req.PromotionTag, oralPrice)
-	} else {
-		script += fmt.Sprintf("只要 %s！", oralPrice)
+	// 🌟 价格组合逻辑优化
+	promo := req.PromotionTag
+	if promo == "" {
+		promo = "今天搞活动"
 	}
 
-	// 结尾
+	if oralOriginalPrice != "" {
+		// 场景：平时都要卖 15块，现在秒杀价只要 11块9毛9！
+		script += fmt.Sprintf("平时都要卖 %s，现在%s，只要 %s！", oralOriginalPrice, promo, oralPrice)
+	} else {
+		script += fmt.Sprintf("现在%s，只要 %s！", promo, oralPrice)
+	}
+
+	// 结尾增加稀缺感
 	if p.HawkingMode == models.ModeLowStock {
-		script += "最后一点点，清仓处理了！"
+		script += "最后最后一点了，便宜处理！"
 	} else {
 		script += closings[rand.Intn(len(closings))]
 	}
