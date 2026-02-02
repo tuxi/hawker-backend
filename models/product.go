@@ -43,6 +43,11 @@ type Product struct {
 	LockedAt      time.Time // 用于处理超时锁
 
 	LastScriptHash string `json:"last_script_hash"` // 存储文案的 MD5 或 SHA1，防止重复文案重复合成是纯粹的浪费
+
+	// --- 静态营销属性 ---
+	// MarketingLabel: 商品的核心物理特征。
+	// 比如：牛肉 -> "新鲜现切的", 猪头肉 -> "半熟的", 鸡爪 -> "个大肥嫩的"
+	MarketingLabel string `json:"marketing_label"`
 }
 
 type ProductDTO struct {

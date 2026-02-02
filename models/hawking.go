@@ -17,6 +17,9 @@ type HawkingTask struct {
 
 	// 关键：标记该任务是否已经完成合成并下发过
 	IsSynthesized bool
+
+	PromotionTag  string `json:"promotion_tag"` // "特价", "秒杀"
+	UseRepeatMode bool   `json:"use_repeat_mode"`
 }
 
 type HawkingIntro struct {
@@ -50,6 +53,11 @@ type AddTaskReq struct {
 
 	VoiceType string `json:"voice_type"` // 👈 用户选定的音色，如 "sunny_boy"
 	IntroID   string `json:"intro_id"`   // 👈 用户指定的开场白 ID，"none" 表示不要
+
+	PromotionTag string `json:"promotion_tag"` // "特价", "秒杀"
+
+	// UseRepeatMode: 是否默认开启“复读机”喊法
+	UseRepeatMode bool `gorm:"default:true" json:"use_repeat_mode"`
 }
 
 type SyncIntroReq struct {

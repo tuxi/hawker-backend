@@ -321,8 +321,10 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 			ConditionUnit: req.ConditionUnit,
 			VoiceType:     req.VoiceType,
 			ProductID:     req.ProductID,
+			PromotionTag:  req.PromotionTag,
+			UseRepeatMode: req.UseRepeatMode,
 		}
-		finalText = logic.GenerateSmartScript(*product, tempTask)
+		finalText = logic.GenerateScript(*product, tempTask)
 		scene = "smart_generated" // 标记是生成的
 	}
 
@@ -338,6 +340,8 @@ func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskRe
 		Unit:          req.Unit,
 		MinQty:        req.MinQty,
 		ConditionUnit: req.ConditionUnit,
+		PromotionTag:  req.PromotionTag,
+		UseRepeatMode: req.UseRepeatMode,
 		VoiceType:     req.VoiceType,
 		Scene:         scene,
 		IsSynthesized: false, // 确保进入循环后被识别为 pendingTasks
