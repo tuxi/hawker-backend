@@ -20,6 +20,7 @@ const (
 // Product 商品模型
 type Product struct {
 	Base
+	StoreID    uuid.UUID `gorm:"type:uuid;index" json:"store_id"` // 所属门店
 	CategoryID uuid.UUID `gorm:"type:uuid;not null" json:"category_id"`
 	Category   Category  `gorm:"foreignKey:CategoryID" json:"category"`
 	Name       string    `gorm:"not null" json:"name"`
@@ -52,9 +53,18 @@ type Product struct {
 
 type ProductDTO struct {
 	ID             uuid.UUID `json:"id"`
+	StoreID        uuid.UUID `gorm:"type:uuid;index" json:"store_id"` // 所属门店
 	Name           string    `json:"name"`
 	Unit           string    `json:"unit"`
 	Price          float64   `json:"price"`
 	CategoryName   string    `json:"category_name"`
 	MarketingLabel string    `json:"marketing_label"`
+}
+
+// Store 门店模型
+type Store struct {
+	Base
+	OwnerID uuid.UUID `json:"owner_id"` // 所属老板ID
+	Name    string    `json:"name"`     // 门店名称：如“城南菜场店”
+	Address string    `json:"address"`
 }

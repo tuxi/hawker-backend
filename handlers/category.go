@@ -32,7 +32,14 @@ func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 }
 
 func (h *CategoryHandler) GetAll(c *gin.Context) {
-	categories, err := h.Repo.FindAll()
+	var req struct {
+		StoreID string `form:"store_id" json:"store_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	categories, err := h.Repo.FindCategoriesByStoreID(req.StoreID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return

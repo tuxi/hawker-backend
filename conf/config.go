@@ -10,6 +10,13 @@ type Config struct {
 	Server     ServerConfig     `mapstructure:"server"`
 	Database   DatabaseConfig   `mapstructure:"database"`
 	Volcengine VolcengineConfig `mapstructure:"volcengine"`
+
+	Auth AuthConfig `mapstructure:"auth"`
+}
+
+type AuthConfig struct {
+	JWTSecret        string `mapstructure:"jwt_secret"`
+	TokenExpireHours int    `mapstructure:"token_expire_hours"`
 }
 
 type ServerConfig struct {

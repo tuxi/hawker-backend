@@ -39,7 +39,14 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 
 // GetProducts 获取所有
 func (h *ProductHandler) GetProducts(c *gin.Context) {
-	products, err := h.Repo.FindAll()
+	var req = struct {
+		StoreID string `form:"store_id" json:"store_id" binding:"required"`
+	}{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "缺少store_id字段"})
+		return
+	}
+	products, err := h.Repo.FindProductsByStoreID(req.StoreID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
@@ -88,28 +95,26 @@ func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 		return
 	}
 
-	// 校验必填的 SessionID
-	if req.SessionID == "" {
-		c.JSON(400, gin.H{"error": "缺少 session_id"})
-		return
-	}
-
+	// 安全校验：确保商品属于该门店
 	product, err := h.Repo.FindByID(req.ProductID)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "商品不存在"})
+	if err != nil || product.StoreID.String() != req.StoreID {
+		c.JSON(403, gin.H{"error": "非法操作：商品与门店不匹配"})
 		return
 	}
 
+	// 策略：将 StoreID 作为 SessionID
+	// 这样能保证每个门店只有一个独立的 runSessionLoop 在运行
+	sessionID := req.StoreID
 	// 1. 调用 Scheduler 的 AddTask (内部会自动处理 Session 的懒加载启动)
-	h.Scheduler.AddTask(product, req)
+	h.Scheduler.AddTask(product, req, sessionID)
 
 	// 2. 获取该 Session 的专属快照 (包含该音色的 IntroPool)
-	currentTasks := h.Scheduler.GetActiveTasksSnapshot(req.SessionID)
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot(sessionID)
 
 	// 3. 返回结果给 Swift 端
 	c.JSON(200, gin.H{
 		"message":    "任务已同步",
-		"session_id": req.SessionID,
+		"session_id": sessionID,
 		"tasks":      currentTasks,
 	})
 }
@@ -117,13 +122,14 @@ func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 // RemoveHawkingTaskHandler 移除叫卖任务
 func (h *ProductHandler) RemoveHawkingTaskHandler(c *gin.Context) {
 	productID := c.Param("id")
-	sessionID := c.Query("session_id") // 对应 Swift: .../tasks/123?session_id=ABC
+	storeID := c.Query("store_id") // 对应 Swift: .../tasks/123?store_id=ABC
 
-	if sessionID == "" {
+	if storeID == "" {
 		c.JSON(400, gin.H{"error": "必须提供 session_id 以定位叫卖任务"})
 		return
 	}
 
+	sessionID := storeID
 	// 1. 从 Session 中移除任务 (如果任务清空，Scheduler 会自动 StopSession)
 	h.Scheduler.RemoveTask(sessionID, productID)
 

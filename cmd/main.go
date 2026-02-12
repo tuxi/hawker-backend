@@ -8,6 +8,7 @@ import (
 	"hawker-backend/conf"
 	"hawker-backend/database"
 	"hawker-backend/handlers"
+	"hawker-backend/middleware"
 	"hawker-backend/models"
 	"hawker-backend/repositories"
 	"hawker-backend/services"
@@ -72,30 +73,45 @@ func main() {
 
 	setupAndPrewarmIntros(introRepository, audioService)
 
+	authHandler := handlers.NewAuthHandler(db, cfg.Auth)
+	storeHandler := handlers.NewStoreHandler(db)
+
 	// 3. 注册路由
 	r := gin.Default()
 	r.Static("/static", "./static")
-	v1 := r.Group("/api/v1")
+	public := r.Group("/api/v1")
+	// 公开的路由
+	{
+		public.POST("/register", authHandler.Register)
+		public.POST("/login", authHandler.Login)
+	}
+	// 需要鉴权的路由
+	protected := r.Group("/api/v1")
+	protected.Use(middleware.AuthMiddleware(cfg.Auth.JWTSecret))
 	{
 		// Product 路由
-		v1.POST("/products", productHandler.CreateProduct)
-		v1.GET("/products", productHandler.GetProducts)
+		protected.POST("/products", productHandler.CreateProduct)
+		protected.GET("/products", productHandler.GetProducts)
 		//v1.PATCH("/products/:id/hawking", productHandler.UpdateHawkingConfig)
-		v1.POST("/products/sync", productHandler.SyncProductsHandler)
+		protected.POST("/products/sync", productHandler.SyncProductsHandler)
 		// 叫卖任务管理
-		v1.POST("/hawking/tasks", productHandler.AddHawkingTaskHandler)          // 添加任务
-		v1.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
-		v1.GET("/hawking/tasks", productHandler.GetHawkingTasksHandler)
-		v1.POST("/hawking/intro", productHandler.SyncIntroHandler)
-		v1.POST("hawking/switch-voice", productHandler.SwitchVoiceHandler) // 切换音色
+		protected.POST("/hawking/tasks", productHandler.AddHawkingTaskHandler)          // 添加任务
+		protected.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
+		protected.GET("/hawking/tasks", productHandler.GetHawkingTasksHandler)
+		protected.POST("/hawking/intro", productHandler.SyncIntroHandler)
+		protected.POST("hawking/switch-voice", productHandler.SwitchVoiceHandler) // 切换音色
 		//v1.GET("/hawking/intros", productHandler.SyncIntroHandler) // 根据音色和时间点获取到开场白池
 
 		// Category 路由
-		v1.POST("/categories", categoryHandler.CreateCategory)
-		v1.GET("/categories", categoryHandler.GetAll)
+		protected.POST("/categories", categoryHandler.CreateCategory)
+		protected.GET("/categories", categoryHandler.GetAll)
+
+		// 门店管理
+		protected.GET("/api/v1/stores", storeHandler.GetMyStores)
+		protected.POST("/api/v1/store", storeHandler.CreateStore)
 
 		// 3. 注册 WebSocket 路由
-		v1.GET("/ws", func(c *gin.Context) {
+		protected.GET("/ws", func(c *gin.Context) {
 			handlers.ServeWs(hub, c)
 		})
 	}

@@ -8,7 +8,7 @@ import (
 
 type CategoryRepository interface {
 	Create(c *models.Category) error
-	FindAll() ([]models.Category, error)
+	FindCategoriesByStoreID(storeID string) ([]models.Category, error)
 	FindByID(id string) (*models.Category, error)
 }
 
@@ -24,9 +24,9 @@ func (r *categoryRepository) Create(c *models.Category) error {
 	return r.db.Create(c).Error
 }
 
-func (r *categoryRepository) FindAll() ([]models.Category, error) {
+func (r *categoryRepository) FindCategoriesByStoreID(storeID string) ([]models.Category, error) {
 	var categories []models.Category
-	err := r.db.Find(&categories).Error
+	err := r.db.Find(&categories).Where("store_id = ?", storeID).Error
 	return categories, err
 }
 

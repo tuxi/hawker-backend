@@ -23,9 +23,10 @@ func InitDB(host, port, user, password, dbname string) (*gorm.DB, error) {
 
 	// 自动迁移表结构
 	err = db.AutoMigrate(
+		&models.Owner{},
+		&models.Store{},
 		&models.Category{},
 		&models.Product{},
-		&models.DisplayItem{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: " + err.Error())

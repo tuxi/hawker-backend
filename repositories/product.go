@@ -11,7 +11,7 @@ import (
 type ProductRepository interface {
 	Create(p *models.Product) error
 	FindByID(id string) (*models.Product, error)
-	FindAll() ([]models.Product, error)
+	FindProductsByStoreID(storeID string) ([]models.Product, error)
 	Update(p *models.Product) error
 	Delete(id string) error
 	SyncProducts(items []models.ProductDTO) error
@@ -44,10 +44,10 @@ func (r *productRepository) FindByID(id string) (*models.Product, error) {
 	return &product, nil
 }
 
-// FindAll 实现接口：查询所有
-func (r *productRepository) FindAll() ([]models.Product, error) {
+// FindCategoriesByStoreID 实现接口：查询某个门店的所有商品
+func (r *productRepository) FindProductsByStoreID(storeID string) ([]models.Product, error) {
 	var products []models.Product
-	err := r.db.Preload("Category").Find(&products).Error
+	err := r.db.Preload("Category").Find(&products).Where("store_id = ?", storeID).Error
 	return products, err
 }
 

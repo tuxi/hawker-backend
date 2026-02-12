@@ -287,23 +287,23 @@ func (s *HawkingScheduler) checkAudioExists(identifier string) bool {
 	return err == nil
 }
 
-func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskReq) {
+func (s *HawkingScheduler) AddTask(product *models.Product, req models.AddTaskReq, sessionID string) {
 	s.sessionMu.Lock()
-	sess, exists := s.sessions[req.SessionID]
+	sess, exists := s.sessions[sessionID]
 	if !exists {
 		// 1. 懒加载：创建并启动新 Session
 		ctx, cancel := context.WithCancel(context.Background())
 		sess = &HawkingSession{
-			ID:            req.SessionID,
+			ID:            sessionID,
 			VoiceType:     req.VoiceType,
 			ActiveTasks:   make(map[string]*models.HawkingTask),
 			taskNotify:    make(chan struct{}, 1),
 			SessionCtx:    ctx,
 			SessionCancel: cancel,
 		}
-		s.sessions[req.SessionID] = sess
+		s.sessions[sessionID] = sess
 		go s.runSessionLoop(sess) // 启动该 Session 的独立循环
-		log.Printf("✨ 自动启动 Session [%s]", req.SessionID)
+		log.Printf("✨ 自动启动 Session [%s]", sessionID)
 	}
 	s.sessionMu.Unlock()
 
