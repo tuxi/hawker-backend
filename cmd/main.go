@@ -107,8 +107,8 @@ func main() {
 		protected.GET("/categories", categoryHandler.GetAll)
 
 		// 门店管理
-		protected.GET("/api/v1/stores", storeHandler.GetMyStores)
-		protected.POST("/api/v1/store", storeHandler.CreateStore)
+		protected.GET("/stores", storeHandler.GetMyStores)
+		protected.POST("/store", storeHandler.CreateStore)
 
 		// 3. 注册 WebSocket 路由
 		protected.GET("/ws", func(c *gin.Context) {

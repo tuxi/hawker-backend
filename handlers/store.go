@@ -28,7 +28,10 @@ func (h *StoreHandler) CreateStore(c *gin.Context) {
 	}
 	store.OwnerID = ownerID // 强制绑定归属关系
 
-	h.DB.Create(&store)
+	if err := h.DB.Create(&store).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(200, store)
 }
 

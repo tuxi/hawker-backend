@@ -16,7 +16,7 @@ type AuthHandler struct {
 }
 
 func NewAuthHandler(DB *gorm.DB, cfg conf.AuthConfig) *AuthHandler {
-	return &AuthHandler{DB: DB}
+	return &AuthHandler{DB: DB, cfg: cfg}
 }
 
 // Register 注册
