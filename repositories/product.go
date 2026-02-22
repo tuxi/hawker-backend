@@ -11,7 +11,7 @@ import (
 type ProductRepository interface {
 	Create(p *models.Product) error
 	FindByID(id string) (*models.Product, error)
-	FindProductsByStoreID(storeID string) ([]models.Product, error)
+	FindProductsByStoreID(storeID string, includeCategory bool) ([]models.Product, error)
 	Update(p *models.Product) error
 	Delete(id string) error
 	SyncProducts(items []models.ProductDTO) error
@@ -47,9 +47,16 @@ func (r *productRepository) FindByID(id string) (*models.Product, error) {
 }
 
 // FindCategoriesByStoreID 实现接口：查询某个门店的所有商品
-func (r *productRepository) FindProductsByStoreID(storeID string) ([]models.Product, error) {
+func (r *productRepository) FindProductsByStoreID(storeID string, includeCategory bool) ([]models.Product, error) {
 	var products []models.Product
-	err := r.db.Preload("Category").Find(&products).Where("store_id = ?", storeID).Error
+	db := r.db.Where("store_id = ?", storeID)
+
+	if includeCategory {
+		// 只有明确需要时才 Preload
+		db = db.Preload("Category")
+	}
+
+	err := db.Find(&products).Error
 	return products, err
 }
 
@@ -127,18 +134,25 @@ func (r *productRepository) SyncProducts(items []models.ProductDTO) error {
 
 			// 2. 构造模型
 			p := models.Product{
-				Base:           models.Base{ID: item.ID},
-				Name:           item.Name,
-				Unit:           item.Unit,
-				CategoryID:     category.ID,
-				MarketingLabel: item.MarketingLabel,
+				Base:             models.Base{ID: item.ID},
+				Name:             item.Name,
+				Unit:             item.Unit,
+				CategoryID:       category.ID,
+				MarketingLabel:   item.MarketingLabel,
+				StoreID:          item.StoreID,
+				SafetyStock:      item.SafetyStock,
+				MinOrderQuantity: item.MinOrderQuantity,
+				MarketingUnit:    item.MarketingUnit,
+				MarketingPrice:   item.MarketingPrice,
+				CurrentStock:     item.CurrentStock,
+				WeekendFactor:    item.WeekendFactor,
 			}
 
 			// 3. 执行 Upsert (存在则更新，不存在则插入)
 			// 注意：AssignmentColumns 仅列出需要从 App 同步过来的字段
 			err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "id"}},
-				DoUpdates: clause.AssignmentColumns([]string{"name", "unit", "category_id", "marketing_label"}),
+				DoUpdates: clause.AssignmentColumns([]string{"name", "unit", "category_id", "marketing_label", "store_id", "safety_stock", "min_order_quantity", "marketing_unit", "marketing_price", "current_stock", "weekend_factor"}),
 			}).Create(&p).Error
 
 			if err != nil {

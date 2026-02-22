@@ -45,7 +45,7 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "缺少store_id字段"})
 		return
 	}
-	products, err := h.Repo.FindProductsByStoreID(storeID)
+	products, err := h.Repo.FindProductsByStoreID(storeID, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
