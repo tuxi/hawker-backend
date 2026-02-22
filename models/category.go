@@ -9,3 +9,9 @@ type Category struct {
 	Name     string    `gorm:"uniqueIndex;not null" json:"name"`
 	Products []Product `gorm:"foreignKey:CategoryID" json:"products,omitempty"`
 }
+
+type CategoryDTO struct {
+	ID      uuid.UUID `json:"id"`
+	StoreID uuid.UUID `json:"store_id"`
+	Name    string    `json:"name"`
+}

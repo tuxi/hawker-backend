@@ -93,7 +93,6 @@ func main() {
 		protected.POST("/products", productHandler.CreateProduct)
 		protected.GET("/products", productHandler.GetProducts)
 		//v1.PATCH("/products/:id/hawking", productHandler.UpdateHawkingConfig)
-		protected.POST("/products/sync", productHandler.SyncProductsHandler)
 		// 叫卖任务管理
 		protected.POST("/hawking/tasks", productHandler.AddHawkingTaskHandler)          // 添加任务
 		protected.DELETE("/hawking/tasks/:id", productHandler.RemoveHawkingTaskHandler) // 移除任务
@@ -105,10 +104,17 @@ func main() {
 		// Category 路由
 		protected.POST("/categories", categoryHandler.CreateCategory)
 		protected.GET("/categories", categoryHandler.GetAll)
-
 		// 门店管理
 		protected.GET("/stores", storeHandler.GetMyStores)
 		protected.POST("/store", storeHandler.CreateStore)
+		protected.GET("/stores/:id/categories", storeHandler.GetCategories)
+		protected.GET("/stores/:id/products", productHandler.GetProducts)
+		protected.GET("/stores/:id/revenues", storeHandler.GetRevenues)
+		protected.GET("/stores/:id/dependencies", productHandler.GetDependencies)
+		protected.POST("/stores/categories/sync", categoryHandler.SyncCategoriesHandler)
+		protected.POST("/stores/products/sync", productHandler.SyncProductsHandler)
+		protected.POST("/stores/products-dependency/sync", productHandler.SyncDependenciesHandler)
+		protected.POST("/stores/revenues/sync", storeHandler.SyncRevenuesHandler)
 
 		// 3. 注册 WebSocket 路由
 		protected.GET("/ws", func(c *gin.Context) {

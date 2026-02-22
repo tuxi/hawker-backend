@@ -39,19 +39,32 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 
 // GetProducts 获取所有
 func (h *ProductHandler) GetProducts(c *gin.Context) {
-	var req = struct {
-		StoreID string `form:"store_id" json:"store_id" binding:"required"`
-	}{}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	storeID := c.Param("id")
+
+	if storeID == "" {
 		c.JSON(400, gin.H{"error": "缺少store_id字段"})
 		return
 	}
-	products, err := h.Repo.FindProductsByStoreID(req.StoreID)
+	products, err := h.Repo.FindProductsByStoreID(storeID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
 	}
 	c.JSON(http.StatusOK, products)
+}
+
+// GetDependencies 获取该门店下所有商品的依赖关系
+func (h *ProductHandler) GetDependencies(c *gin.Context) {
+	storeID := c.Param("id")
+
+	dependencies, err := h.Repo.FindDependencies(storeID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取依赖关系失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, dependencies)
 }
 
 func (h *ProductHandler) SyncProductsHandler(c *gin.Context) {
@@ -178,4 +191,19 @@ func (h *ProductHandler) SwitchVoiceHandler(c *gin.Context) {
 		"session_id": req.SessionID,
 		"tasks":      currentTasks,
 	})
+}
+
+// 同步依赖接口
+func (h *ProductHandler) SyncDependenciesHandler(c *gin.Context) {
+	var items []models.DependencyDTO
+	if err := c.ShouldBindJSON(&items); err != nil {
+		c.JSON(400, gin.H{"error": "无效的数据格式"})
+		return
+	}
+
+	if err := h.Repo.SyncDependencies(items); err != nil {
+		c.JSON(500, gin.H{"error": "依赖同步失败: " + err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"status": "ok", "count": len(items)})
 }

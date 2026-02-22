@@ -17,6 +17,8 @@ type ProductRepository interface {
 	SyncProducts(items []models.ProductDTO) error
 	// 专门处理叫卖状态的原子更新
 	UpdateHawkingFields(id string, fields map[string]interface{}) error
+	FindDependencies(storeID string) ([]models.ProductDependency, error)
+	SyncDependencies(items []models.DependencyDTO) error
 
 	GetNextHawkingProduct() (*models.Product, error)
 	UpdateHawkingStatus(id string, updates map[string]interface{}) error
@@ -146,4 +148,69 @@ func (r *productRepository) SyncProducts(items []models.ProductDTO) error {
 		return nil
 	})
 	return err
+}
+
+func (r *productRepository) FindDependencies(storeID string) ([]models.ProductDependency, error) {
+	var dependencies []models.ProductDependency
+	// 核心逻辑：通过 Join Product 表来过滤属于该门店的依赖
+	err := r.db.Table("product_dependencies").
+		Select("product_dependencies.*").
+		Joins("JOIN products ON products.id = product_dependencies.parent_id").
+		Where("products.store_id = ?", storeID).
+		Find(&dependencies).Error
+	return dependencies, err
+}
+
+func (r *productRepository) SyncDependencies(items []models.DependencyDTO) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range items {
+			dep := models.ProductDependency{
+				Base:           models.Base{ID: item.ID},
+				ParentID:       item.ParentID,
+				ChildID:        item.ChildID,
+				Ratio:          item.Ratio,
+				Priority:       item.Priority,
+				AllowsSeparate: item.AllowsSeparate,
+			}
+
+			// 执行 Upsert
+			err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"parent_id", "child_id", "ratio", "priority", "allows_separate", "updated_at",
+				}),
+			}).Create(&dep).Error
+
+			if err != nil {
+				return err // 如果 parent_id 或 child_id 不存在，由于外键约束会报错
+			}
+		}
+		return nil
+	})
+}
+
+func (r *productRepository) SyncRevenues(items []models.RevenueDTO) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range items {
+			record := models.SalesRecord{
+				Base:    models.Base{ID: item.ID},
+				Date:    item.Date,
+				Revenue: item.Revenue,
+				Notes:   item.Notes,
+				StoreID: item.StoreID,
+			}
+
+			err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"revenue", "notes", "date", "store_id", "updated_at",
+				}),
+			}).Create(&record).Error
+
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

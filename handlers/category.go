@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"hawker-backend/models"
 	"hawker-backend/repositories"
 	"net/http"
@@ -45,4 +46,25 @@ func (h *CategoryHandler) GetAll(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, categories)
+}
+
+func (h *CategoryHandler) SyncCategoriesHandler(c *gin.Context) {
+	var items []models.CategoryDTO
+	if err := c.ShouldBindJSON(&items); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的数据格式: " + err.Error()})
+		return
+	}
+
+	// 调用 Repository 执行同步
+	err := h.Repo.SyncCategories(items)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "同步分类失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "ok",
+		"message": fmt.Sprintf("分类同步成功，共处理 %d 条数据", len(items)),
+	})
 }
