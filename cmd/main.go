@@ -111,10 +111,12 @@ func main() {
 		protected.GET("/stores/:id/products", productHandler.GetProducts)
 		protected.GET("/stores/:id/revenues", storeHandler.GetRevenues)
 		protected.GET("/stores/:id/dependencies", productHandler.GetDependencies)
+		protected.GET("stores/:id/promotions", storeHandler.GetPromotions)
 		protected.POST("/stores/categories/sync", categoryHandler.SyncCategoriesHandler)
 		protected.POST("/stores/products/sync", productHandler.SyncProductsHandler)
 		protected.POST("/stores/products-dependency/sync", productHandler.SyncDependenciesHandler)
 		protected.POST("/stores/revenues/sync", storeHandler.SyncRevenuesHandler)
+		protected.POST("/stores/promotions/sync", storeHandler.SyncPromotionsHandler)
 
 		// 3. 注册 WebSocket 路由
 		protected.GET("/ws", func(c *gin.Context) {

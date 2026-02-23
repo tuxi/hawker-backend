@@ -29,6 +29,8 @@ func InitDB(host, port, user, password, dbname string) (*gorm.DB, error) {
 		&models.Product{},
 		&models.SalesRecord{},
 		&models.ProductDependency{},
+		&models.PromotionSession{},
+		&models.MarketingPromotion{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: " + err.Error())

@@ -78,16 +78,6 @@ type ProductDTO struct {
 	VendorName string `json:"vendor_name"`
 }
 
-// Store 门店模型
-type Store struct {
-	Base
-	OwnerID uuid.UUID `gorm:"type:uuid;index" json:"owner_id"` // 索引提高查询效率
-	Name    string    `gorm:"type:varchar(100);not null" json:"name"`
-	Address string    `gorm:"type:text" json:"address"`
-	// 关联关系（可选，方便 Preload）
-	Products []Product `gorm:"foreignKey:StoreID" json:"-"`
-}
-
 // ProductDependency 商品依赖模型
 type ProductDependency struct {
 	Base
@@ -105,15 +95,6 @@ type ProductDependency struct {
 	ChildProduct  Product `gorm:"foreignKey:ChildID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
 }
 
-// SalesRecord 营业额模型
-type SalesRecord struct {
-	Base
-	Date    time.Time `gorm:"index;not null" json:"date"` // 加上日期字段，便于按天查询
-	Revenue float64   `gorm:"type:decimal(12,2)" json:"revenue"`
-	Notes   string    `gorm:"type:text" json:"notes"`
-	StoreID uuid.UUID `gorm:"type:uuid;index;not null" json:"store_id"` // 改为 uuid 类型与 Store.ID 匹配
-}
-
 type DependencyDTO struct {
 	ID             uuid.UUID `json:"id"`
 	ParentID       uuid.UUID `json:"parent_id"`
@@ -121,12 +102,4 @@ type DependencyDTO struct {
 	Ratio          float64   `json:"ratio"`
 	Priority       int       `json:"priority"`
 	AllowsSeparate bool      `json:"allows_separate"`
-}
-
-type RevenueDTO struct {
-	ID      uuid.UUID `json:"id"`
-	Date    time.Time `json:"date"`
-	Revenue float64   `json:"revenue"`
-	Notes   string    `json:"notes"`
-	StoreID uuid.UUID `json:"store_id"`
 }

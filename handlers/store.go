@@ -116,3 +116,87 @@ func (r *StoreHandler) syncRevenues(items []models.RevenueDTO) error {
 		return nil
 	})
 }
+
+// GetPromotions 获取门店促销活动（包含明细）
+func (h *StoreHandler) GetPromotions(c *gin.Context) {
+	storeID := c.Param("id")
+	var sessions []models.PromotionSession
+
+	// 使用 Preload 预加载关联的 Items，并按日期倒序
+	if err := h.DB.Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("marketing_promotions.sort_order ASC")
+	}).Where("store_id = ?", storeID).Order("date DESC").Find(&sessions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取促销活动失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, sessions)
+}
+
+// SyncPromotionsHandler 同步促销活动接口
+func (h *StoreHandler) SyncPromotionsHandler(c *gin.Context) {
+	var items []models.PromotionSessionDTO
+	if err := c.ShouldBindJSON(&items); err != nil {
+		c.JSON(400, gin.H{"error": "无效的数据格式"})
+		return
+	}
+
+	if err := h.syncPromotions(items); err != nil {
+		c.JSON(500, gin.H{"error": "促销活动同步失败: " + err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"status": "ok"})
+}
+
+func (r *StoreHandler) syncPromotions(items []models.PromotionSessionDTO) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		for _, sessionDTO := range items {
+			// 1. 同步 Session 外壳
+			session := models.PromotionSession{
+				Base:      models.Base{ID: sessionDTO.ID},
+				Title:     sessionDTO.Title,
+				Date:      sessionDTO.Date,
+				StartDate: sessionDTO.StartDate,
+				StoreID:   sessionDTO.StoreID,
+			}
+
+			err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"title", "date", "start_date", "store_id", "updated_at",
+				}),
+			}).Create(&session).Error
+			if err != nil {
+				return err
+			}
+
+			// 2. 同步 Session 下的所有 Promotion Items
+			for _, itemDTO := range sessionDTO.Items {
+				promoItem := models.MarketingPromotion{
+					Base:          models.Base{ID: itemDTO.ID},
+					SessionID:     sessionDTO.ID, // 关联父级 ID
+					ProductID:     itemDTO.ProductID,
+					ProductName:   itemDTO.ProductName,
+					OriginalPrice: itemDTO.OriginalPrice,
+					PromoPrice:    itemDTO.PromoPrice,
+					PromoUnit:     itemDTO.PromoUnit,
+					PromoTag:      itemDTO.PromoTag,
+					Remark:        itemDTO.Remark,
+					SortOrder:     itemDTO.SortOrder,
+				}
+
+				err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "id"}},
+					DoUpdates: clause.AssignmentColumns([]string{
+						"product_id", "product_name", "original_price", "promo_price",
+						"promo_unit", "promo_tag", "remark", "sort_order", "updated_at",
+					}),
+				}).Create(&promoItem).Error
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
