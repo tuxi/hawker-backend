@@ -59,13 +59,13 @@ type Product struct {
 }
 
 type ProductDTO struct {
-	ID             uuid.UUID `json:"id"`
-	StoreID        uuid.UUID `json:"store_id"` // 所属门店
-	Name           string    `json:"name"`
-	Unit           string    `json:"unit"`  // 订货单位
-	Price          float64   `json:"price"` // 订货价格
-	CategoryName   string    `json:"category_name"`
-	MarketingLabel string    `json:"marketing_label"`
+	ID             uuid.UUID   `json:"id"`
+	StoreID        uuid.UUID   `json:"store_id"` // 所属门店
+	Name           string      `json:"name"`
+	Unit           string      `json:"unit"`  // 订货单位
+	Price          float64     `json:"price"` // 订货价格
+	Category       CategoryDTO `json:"category"`
+	MarketingLabel string      `json:"marketing_label"`
 
 	SafetyStock      int     `json:"safety_stock"`       // 安全库存
 	WeekendFactor    float64 `json:"weekend_factor"`     // 周末系数
@@ -117,7 +117,7 @@ type SalesRecord struct {
 type DependencyDTO struct {
 	ID             uuid.UUID `json:"id"`
 	ParentID       uuid.UUID `json:"parent_id"`
-	ChildID        uuid.UUID `json:"childID"`
+	ChildID        uuid.UUID `json:"child_id"`
 	Ratio          float64   `json:"ratio"`
 	Priority       int       `json:"priority"`
 	AllowsSeparate bool      `json:"allows_separate"`

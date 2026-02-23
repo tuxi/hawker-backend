@@ -205,5 +205,5 @@ func (h *ProductHandler) SyncDependenciesHandler(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "依赖同步失败: " + err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"status": "ok", "count": len(items)})
+	c.JSON(200, gin.H{"status": "ok"})
 }

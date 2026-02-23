@@ -126,9 +126,19 @@ func (r *productRepository) SyncProducts(items []models.ProductDTO) error {
 	// 在事务中处理同步
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		for _, item := range items {
-			// 1. 确保分类存在 (根据名称查找或创建)
-			var category models.Category
-			if err := tx.FirstOrCreate(&category, models.Category{Name: item.CategoryName}).Error; err != nil {
+			// 1. 强制同步分类 ID
+			// 不再只根据 Name 查找，而是根据 ID 进行 Upsert
+			category := models.Category{
+				Base:    models.Base{ID: item.Category.ID}, // 使用客户端传来的 ID
+				Name:    item.Category.Name,
+				StoreID: item.Category.StoreID,
+			}
+
+			// 先对分类进行 Upsert，确保分类表的 ID 与客户端一致
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"name"}),
+			}).Create(&category).Error; err != nil {
 				return err
 			}
 
