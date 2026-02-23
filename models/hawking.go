@@ -40,7 +40,6 @@ type TaskBundle struct {
 }
 
 type AddTaskReq struct {
-	//SessionID     string  `json:"session_id" binding:"required"` // 👈 必须
 	StoreID       string  `json:"store_id" binding:"required"`
 	ProductID     string  `json:"product_id" binding:"required"`
 	Text          string  `json:"text"`           // 用户完全自定义的文案

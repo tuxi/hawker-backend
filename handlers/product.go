@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type ProductHandler struct {
@@ -105,12 +106,12 @@ func (h *ProductHandler) SyncProductsHandler(c *gin.Context) {
 
 // 获取所有叫卖任务
 func (h *ProductHandler) GetHawkingTasksHandler(c *gin.Context) {
-	sessionID := c.Query("session_id")
-	if sessionID == "" {
+	storeId := c.Query("store_id")
+	if storeId == "" {
 		c.JSON(400, gin.H{"error": "必须提供 session_id 以定位叫卖任务"})
 		return
 	}
-	currentTasks := h.Scheduler.GetActiveTasksSnapshot(sessionID)
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot(storeId)
 
 	c.JSON(200, gin.H{
 		"status":  "resumed",
@@ -129,7 +130,8 @@ func (h *ProductHandler) AddHawkingTaskHandler(c *gin.Context) {
 
 	// 安全校验：确保商品属于该门店
 	product, err := h.Repo.FindByID(req.ProductID)
-	if err != nil || product.StoreID.String() != req.StoreID {
+	storeId, _ := uuid.Parse(req.StoreID)
+	if err != nil || product.StoreID != storeId {
 		c.JSON(403, gin.H{"error": "非法操作：商品与门店不匹配"})
 		return
 	}
@@ -189,25 +191,25 @@ func (h *ProductHandler) SyncIntroHandler(c *gin.Context) {
 // 切换音色
 func (h *ProductHandler) SwitchVoiceHandler(c *gin.Context) {
 	var req struct {
-		SessionID  string   `json:"session_id"`
+		StoreId    string   `json:"store_id"`
 		VoiceID    string   `json:"voice_id"`
 		ProductIDs []string `json:"product_ids"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"status": "参数错误", "session_id": req.SessionID})
+		c.JSON(400, gin.H{"status": "参数错误", "session_id": req.StoreId})
 		return
 	}
 
 	// 触发后端重置与重新合成任务
-	h.Scheduler.ChangeSessionVoice(req.SessionID, req.VoiceID, req.ProductIDs)
+	h.Scheduler.ChangeSessionVoice(req.StoreId, req.VoiceID, req.ProductIDs)
 
-	currentTasks := h.Scheduler.GetActiveTasksSnapshot(req.SessionID)
+	currentTasks := h.Scheduler.GetActiveTasksSnapshot(req.StoreId)
 
 	// 3. 在接口响应中立即下发，让客户端知道“文案已经变了”
 	c.JSON(200, gin.H{
 		"status":     "processing",
-		"session_id": req.SessionID,
+		"session_id": req.StoreId,
 		"tasks":      currentTasks,
 	})
 }
