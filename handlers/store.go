@@ -3,6 +3,7 @@ package handlers
 import (
 	"hawker-backend/models"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -52,9 +53,25 @@ func (h *StoreHandler) GetMyStores(c *gin.Context) {
 // GetRevenues 获取门店营业额记录
 func (h *StoreHandler) GetRevenues(c *gin.Context) {
 	storeID := c.Param("id")
+	sinceStr := c.Query("since") // 2026-02-23T10:00:00Z
+
+	var sinceTime *time.Time
+	if sinceStr != "" {
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err == nil {
+			sinceTime = &t
+		}
+	}
+
+	query := h.DB.Where("store_id = ?", storeID)
+	// 🌟 核心：如果有传入时间戳，只查大于该时间的数据
+	if sinceTime != nil {
+		query = query.Where("updated_at > ?", sinceTime)
+	}
+
 	var revenues []models.SalesRecord
 
-	if err := h.DB.Where("store_id = ?", storeID).Order("date DESC").Find(&revenues).Error; err != nil {
+	if err := query.Order("date DESC").Find(&revenues).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取营业额失败"})
 		return
 	}
@@ -65,10 +82,24 @@ func (h *StoreHandler) GetRevenues(c *gin.Context) {
 // GetCategories 获取门店分类
 func (h *StoreHandler) GetCategories(c *gin.Context) {
 	storeID := c.Param("id")
+	sinceStr := c.Query("since") // 2026-02-23T10:00:00Z
 	var categories []models.Category
 
-	// 假设 ProductCategory 表中有 store_id 字段
-	if err := h.DB.Where("store_id = ?", storeID).Find(&categories).Error; err != nil {
+	var sinceTime *time.Time
+	if sinceStr != "" {
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err == nil {
+			sinceTime = &t
+		}
+	}
+
+	query := h.DB.Where("store_id = ?", storeID)
+	// 如果有传入时间戳，只查大于该时间的数据
+	if sinceTime != nil {
+		query = query.Where("updated_at > ?", sinceTime)
+	}
+
+	if err := query.Find(&categories).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取分类失败"})
 		return
 	}
@@ -120,12 +151,29 @@ func (r *StoreHandler) syncRevenues(items []models.RevenueDTO) error {
 // GetPromotions 获取门店促销活动（包含明细）
 func (h *StoreHandler) GetPromotions(c *gin.Context) {
 	storeID := c.Param("id")
+	sinceStr := c.Query("since") // 2026-02-23T10:00:00Z
+
+	var sinceTime *time.Time
+	if sinceStr != "" {
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err == nil {
+			sinceTime = &t
+		}
+	}
+
 	var sessions []models.PromotionSession
 
 	// 使用 Preload 预加载关联的 Items，并按日期倒序
-	if err := h.DB.Preload("Items", func(db *gorm.DB) *gorm.DB {
+	db := h.DB.Preload("Items", func(db *gorm.DB) *gorm.DB {
 		return db.Order("marketing_promotions.sort_order ASC")
-	}).Where("store_id = ?", storeID).Order("date DESC").Find(&sessions).Error; err != nil {
+	}).Where("store_id = ?", storeID)
+
+	// 如果有传入时间戳，只查大于该时间的数据
+	if sinceTime != nil {
+		db = db.Where("updated_at > ?", sinceTime)
+	}
+
+	if err := db.Order("date DESC").Find(&sessions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取促销活动失败"})
 		return
 	}

@@ -11,13 +11,13 @@ import (
 type ProductRepository interface {
 	Create(p *models.Product) error
 	FindByID(id string) (*models.Product, error)
-	FindProductsByStoreID(storeID string, includeCategory bool) ([]models.Product, error)
+	FindProductsByStoreID(storeID string, includeCategory bool, sinceTime *time.Time) ([]models.Product, error)
 	Update(p *models.Product) error
 	Delete(id string) error
 	SyncProducts(items []models.ProductDTO) error
 	// 专门处理叫卖状态的原子更新
 	UpdateHawkingFields(id string, fields map[string]interface{}) error
-	FindDependencies(storeID string) ([]models.ProductDependency, error)
+	FindDependencies(storeID string, sinceTime *time.Time) ([]models.ProductDependency, error)
 	SyncDependencies(items []models.DependencyDTO) error
 
 	GetNextHawkingProduct() (*models.Product, error)
@@ -47,9 +47,13 @@ func (r *productRepository) FindByID(id string) (*models.Product, error) {
 }
 
 // FindCategoriesByStoreID 实现接口：查询某个门店的所有商品
-func (r *productRepository) FindProductsByStoreID(storeID string, includeCategory bool) ([]models.Product, error) {
+func (r *productRepository) FindProductsByStoreID(storeID string, includeCategory bool, sinceTime *time.Time) ([]models.Product, error) {
 	var products []models.Product
 	db := r.db.Where("store_id = ?", storeID)
+	// 如果有传入时间戳，只查大于该时间的数据
+	if sinceTime != nil {
+		db = db.Where("updated_at > ?", sinceTime)
+	}
 
 	if includeCategory {
 		// 只有明确需要时才 Preload
@@ -174,14 +178,21 @@ func (r *productRepository) SyncProducts(items []models.ProductDTO) error {
 	return err
 }
 
-func (r *productRepository) FindDependencies(storeID string) ([]models.ProductDependency, error) {
+func (r *productRepository) FindDependencies(storeID string, sinceTime *time.Time) ([]models.ProductDependency, error) {
 	var dependencies []models.ProductDependency
 	// 核心逻辑：通过 Join Product 表来过滤属于该门店的依赖
-	err := r.db.Table("product_dependencies").
+	db := r.db.Table("product_dependencies").
 		Select("product_dependencies.*").
 		Joins("JOIN products ON products.id = product_dependencies.parent_id").
-		Where("products.store_id = ?", storeID).
-		Find(&dependencies).Error
+		Where("products.store_id = ?", storeID)
+
+	// 如果有传入时间戳，只查大于该时间的数据
+	if sinceTime != nil {
+		db = db.Where("updated_at > ?", sinceTime)
+	}
+
+	err := db.Find(&dependencies).Error
+
 	return dependencies, err
 }
 

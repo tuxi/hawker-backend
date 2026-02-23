@@ -6,6 +6,7 @@ import (
 	"hawker-backend/repositories"
 	"hawker-backend/services"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,12 +41,21 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 // GetProducts 获取所有
 func (h *ProductHandler) GetProducts(c *gin.Context) {
 	storeID := c.Param("id")
+	sinceStr := c.Query("since") // 2026-02-23T10:00:00Z
+
+	var sinceTime *time.Time
+	if sinceStr != "" {
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err == nil {
+			sinceTime = &t
+		}
+	}
 
 	if storeID == "" {
 		c.JSON(400, gin.H{"error": "缺少store_id字段"})
 		return
 	}
-	products, err := h.Repo.FindProductsByStoreID(storeID, true)
+	products, err := h.Repo.FindProductsByStoreID(storeID, true, sinceTime)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
@@ -56,8 +66,17 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 // GetDependencies 获取该门店下所有商品的依赖关系
 func (h *ProductHandler) GetDependencies(c *gin.Context) {
 	storeID := c.Param("id")
+	sinceStr := c.Query("since") // 2026-02-23T10:00:00Z
 
-	dependencies, err := h.Repo.FindDependencies(storeID)
+	var sinceTime *time.Time
+	if sinceStr != "" {
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err == nil {
+			sinceTime = &t
+		}
+	}
+
+	dependencies, err := h.Repo.FindDependencies(storeID, sinceTime)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取依赖关系失败"})
