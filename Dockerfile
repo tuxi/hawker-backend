@@ -11,7 +11,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 # 只编译linux
-RUN make linux
+#RUN make linux
+RUN GOMAXPROCS=1 make linux # 限制 Go 编译并发 降低内存
 # 跑 Makefile 里的 windows linux mac 三个任务
 #RUN make build
 
